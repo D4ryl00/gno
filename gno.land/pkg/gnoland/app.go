@@ -157,6 +157,7 @@ func PanicOnFailingTxHandler(ctx sdk.Context, tx std.Tx, res sdk.Result) {
 // InitChainer returns a function that can initialize the chain with genesis.
 func InitChainer(baseApp *sdk.BaseApp, acctKpr auth.AccountKeeperI, bankKpr bank.BankKeeperI, resHandler GenesisTxHandler) func(sdk.Context, abci.RequestInitChain) abci.ResponseInitChain {
 	return func(ctx sdk.Context, req abci.RequestInitChain) abci.ResponseInitChain {
+		txResponses := []abci.ResponseDeliverTx{}
 		if req.AppState != nil {
 			// Get genesis state
 			genState := req.AppState.(GnoGenesisState)
@@ -184,12 +185,18 @@ func InitChainer(baseApp *sdk.BaseApp, acctKpr auth.AccountKeeperI, bankKpr bank
 				}
 
 				resHandler(ctx, tx, res)
+				txResponses = append(txResponses, abci.ResponseDeliverTx{
+					ResponseBase: res.ResponseBase,
+					GasWanted:    res.GasWanted,
+					GasUsed:      res.GasUsed,
+				})
 			}
 		}
 
 		// Done!
 		return abci.ResponseInitChain{
-			Validators: req.Validators,
+			Validators:  req.Validators,
+			TxResponses: txResponses,
 		}
 	}
 }
