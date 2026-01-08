@@ -198,19 +198,39 @@ func ExecSignAndBroadcast(
 	// query account
 	nameOrBech32 := args[0]
 
-	var err error
-	var pass string
-	if baseopts.Quiet {
-		pass, err = io.GetPassword("", baseopts.InsecurePasswordStdin)
-	} else {
-		pass, err = io.GetPassword("Enter password.", baseopts.InsecurePasswordStdin)
-	}
-
+	// Load the keybase
+	kb, err := keys.NewKeyBaseFromDir(cfg.RootCfg.Home)
 	if err != nil {
-		return err
+		return fmt.Errorf("unable to load keybase, %w", err)
 	}
 
-	bres, err := SignAndBroadcastHandler(cfg, nameOrBech32, tx, pass)
+	// Fetch the key info from the keybase
+	info, err := kb.GetByNameOrAddress(nameOrBech32)
+	if err != nil {
+		return fmt.Errorf("unable to get key from keybase, %w", err)
+	}
+
+	var password string
+
+	// Check if we need to get a decryption password.
+	// This is only required for local keys
+	if info.GetType() != keys.TypeLedger {
+		// Get the keybase decryption password
+		prompt := "Enter password to decrypt key"
+		if baseopts.Quiet {
+			prompt = "" // No prompt
+		}
+
+		password, err = io.GetPassword(
+			prompt,
+			baseopts.InsecurePasswordStdin,
+		)
+		if err != nil {
+			return fmt.Errorf("unable to get decryption key, %w", err)
+		}
+	}
+
+	bres, err := SignAndBroadcastHandler(cfg, nameOrBech32, tx, password)
 	if err != nil {
 		return errors.Wrap(err, "broadcast tx")
 	}
