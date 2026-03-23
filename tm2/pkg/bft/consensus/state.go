@@ -1746,12 +1746,7 @@ func (cs *ConsensusState) voteTime() time.Time {
 	return minVoteTime
 }
 
-func (cs *ConsensusState) existingSignedVote(type_ types.SignedMsgType) *types.Vote {
-	if cs.privValidator == nil {
-		return nil
-	}
-
-	address := cs.privValidator.PubKey().Address()
+func (cs *ConsensusState) existingSignedVote(type_ types.SignedMsgType, address crypto.Address) *types.Vote {
 	var voteSet *types.VoteSet
 	switch type_ {
 	case types.PrevoteType:
@@ -1767,15 +1762,18 @@ func (cs *ConsensusState) existingSignedVote(type_ types.SignedMsgType) *types.V
 
 // sign the vote and publish on internalMsgQueue
 func (cs *ConsensusState) signAddVote(type_ types.SignedMsgType, hash []byte, header types.PartSetHeader) {
-	address := cs.privValidator.PubKey().Address()
-
 	// if we don't have a key or we're not in the validator set, do nothing
-	if cs.privValidator == nil || !cs.Validators.HasAddress(address) {
+	if cs.privValidator == nil {
+		return
+	}
+
+	address := cs.privValidator.PubKey().Address()
+	if !cs.Validators.HasAddress(address) {
 		return
 	}
 
 	blockID := types.BlockID{Hash: hash, PartsHeader: header}
-	if existing := cs.existingSignedVote(type_); existing != nil {
+	if existing := cs.existingSignedVote(type_, address); existing != nil {
 		if existing.BlockID.Equals(blockID) {
 			cs.Logger.Info(
 				"Reusing known self vote from vote set",
