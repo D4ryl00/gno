@@ -1746,6 +1746,25 @@ func (cs *ConsensusState) voteTime() time.Time {
 	return minVoteTime
 }
 
+func (cs *ConsensusState) existingSignedVote(type_ types.SignedMsgType) *types.Vote {
+	if cs.privValidator == nil {
+		return nil
+	}
+
+	address := cs.privValidator.PubKey().Address()
+	var voteSet *types.VoteSet
+	switch type_ {
+	case types.PrevoteType:
+		voteSet = cs.Votes.Prevotes(cs.Round)
+	case types.PrecommitType:
+		voteSet = cs.Votes.Precommits(cs.Round)
+	default:
+		panic("unknown vote type")
+	}
+
+	return voteSet.GetByAddress(address)
+}
+
 // sign the vote and publish on internalMsgQueue
 func (cs *ConsensusState) signAddVote(type_ types.SignedMsgType, hash []byte, header types.PartSetHeader) {
 	address := cs.privValidator.PubKey().Address()
@@ -1754,6 +1773,33 @@ func (cs *ConsensusState) signAddVote(type_ types.SignedMsgType, hash []byte, he
 	if cs.privValidator == nil || !cs.Validators.HasAddress(address) {
 		return
 	}
+
+	blockID := types.BlockID{Hash: hash, PartsHeader: header}
+	if existing := cs.existingSignedVote(type_); existing != nil {
+		if existing.BlockID.Equals(blockID) {
+			cs.Logger.Info(
+				"Reusing known self vote from vote set",
+				"height", existing.Height,
+				"round", existing.Round,
+				"type", existing.Type,
+				"validator address", existing.ValidatorAddress,
+				"validator index", existing.ValidatorIndex,
+			)
+			return
+		}
+
+		cs.Logger.Error(
+			"Refusing to sign conflicting self vote",
+			"height", cs.Height,
+			"round", cs.Round,
+			"type", type_,
+			"validator address", address,
+			"existing block ID", existing.BlockID,
+			"new block ID", blockID,
+		)
+		return
+	}
+
 	vote, err := cs.signVote(type_, hash, header)
 	if err == nil {
 		cs.sendInternalMessage(msgInfo{&VoteMessage{vote}, ""})
