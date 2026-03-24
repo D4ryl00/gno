@@ -16,11 +16,12 @@ on restart, a timer re-firing, or a round re-evaluation), this flush was wasted.
 
 **2. Incompatibility with strict remote signers (KMS/HSM).**
 `types.PrivValidator` is an interface. The local `privval.PrivValidator`
-implementation tolerates re-sign requests for the same height/round/step via its
-`sameHRS` + `CheckVotesOnlyDifferByTimestamp` logic. A remote signer (e.g., a KMS)
-is under no such obligation — a strict implementation can reject any re-sign attempt
-as a potential double-sign, causing the consensus node to log errors and potentially
-stall.
+implementation tolerates re-sign requests via its `sameHRS` +
+`CheckVotesOnlyDifferByTimestamp` logic — the conflicting vote is silently dropped
+by the vote set (`ErrAddingVote` is discarded, logged as INFO) and consensus
+proceeds normally. However, a strict remote signer (e.g., a KMS) may reject
+re-sign requests entirely, causing the node to never cast its vote for that round
+and potentially stalling consensus.
 
 The concrete trigger observed in tests: in a 2-validator network where one node's
 prevote is delayed, the other node can reach a state where `signAddVote` is invoked
@@ -82,8 +83,11 @@ harder to maintain and easier to miss. Rejected.
 
 - `signAddVote` no longer triggers a WAL flush or a signer call when the vote is
   already in the vote set for the current round.
-- Nodes using a strict remote signer (KMS) will no longer encounter spurious
-  re-sign errors during replay or message re-delivery.
+- With a local signer, re-triggered `signAddVote` calls were harmless but wasteful:
+  the conflicting vote was silently dropped, the original vote retained, and
+  consensus unaffected. The fix eliminates the unnecessary WAL flush and log noise.
+- With a strict remote signer, the fix prevents the node from failing to cast its
+  vote after a restart, which could stall consensus.
 - The nil pointer dereference for observer nodes is eliminated.
 - A new round resets the vote set, so signing proceeds normally after a round
   change — no behavioral change for the normal consensus path.
