@@ -268,7 +268,9 @@ Normalize parsed lines into events such as:
 - node start / stop
 - config error (unrecognized key or bad value)
 - waiting for genesis time
+- WAL started / WAL stopped
 - fast-sync started / fast-sync finished (SwitchToConsensus)
+- fast-sync block validation error (wrong block id from peer)
 - added peer
 - stopped peer
 - dial attempt / dial failure
@@ -409,6 +411,19 @@ The `Receive` debug messages on channel `35` carry `VoteSetBits` (`VSB`) message
 `[VSB H/RR/type hash BA{N:bitstring}]`. Tracking these reveals which validators a peer
 believes have voted, and whether the same stale bit array repeats — a sign of stuck consensus.
 
+#### Blockchain reactor (fast-sync)
+
+From `tm2/pkg/bft/blockchain/reactor.go`:
+
+- `Starting BlockchainReactor` / `Starting BlockPool` — fast-sync begin
+- `Stopping BlockPool` — fast-sync end
+- `Time to switch to consensus reactor!` — fast-sync completed, about to call SwitchToConsensus
+- `Fast Sync Rate` (debug, with current height and peers) — periodic fast-sync progress
+- `Error in validation` (error, with `err` field) — block received from a peer failed commit validation; immediately followed by `Stopping peer for error` with `BlockchainReactor validation error: invalid commit -- wrong block id: want X got Y`
+- `Peer asking for a block we don't have` — a peer requested a height this node does not hold
+
+When multiple peers are stopped for the same `wrong block id` in fast-sync, it indicates a possible chain fork or that this node has divergent state relative to the majority of the network.
+
 #### P2P
 
 From `tm2/pkg/p2p/switch.go` and `tm2/pkg/p2p/discovery/discovery.go`:
@@ -521,6 +536,7 @@ Example findings:
 - unrecognized config key at startup
 - startup blocked before genesis time
 - node never switched from fast-sync to consensus
+- WAL stopped immediately after consensus panic (crash confirmed)
 - node never reached first commit
 - node committed until height `H` then stalled
 
@@ -567,6 +583,7 @@ Derived diagnoses:
 - fast-sync mode causes consensus messages to be ignored unexpectedly
 - proposal block parts header mismatches recur
 - gossip routines stopping unexpectedly
+- during fast-sync: `Error in validation` followed by `Stopping peer for error` with `BlockchainReactor validation error: invalid commit -- wrong block id`; if multiple peers are ejected for the same mismatch, suspect chain fork or divergent local state
 
 Derived diagnoses:
 
@@ -574,6 +591,7 @@ Derived diagnoses:
 - block part mismatch
 - malformed or incompatible peer traffic
 - node stuck in fast-sync
+- possible chain fork or corrupted local state during fast-sync
 
 ### 5. Peer connectivity and churn checks
 
@@ -735,6 +753,7 @@ Add end-to-end test fixtures with:
 - consensus panic (`CONSENSUS FAILURE!!!`)
 - partial logs with low-confidence result
 - fast-sync never completing
+- fast-sync block validation errors (wrong block id from multiple peers)
 
 ### Fixture format
 
