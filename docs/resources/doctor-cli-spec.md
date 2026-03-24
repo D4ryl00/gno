@@ -153,6 +153,76 @@ Because logs may not always encode enough identity information, the CLI should a
 - `--since`, `--until`
 - `--timezone`
 
+### Optional metadata files
+
+Node identity should come from logs when possible, but the tool must also support optional metadata files to improve mapping and confidence.
+
+Recommended format for v1:
+
+- TOML is the metadata format
+- JSON and YAML are not supported for metadata in v1
+
+Why TOML:
+
+- easy for operators to read and edit
+- supports comments
+- simpler and less ambiguous than YAML
+- already familiar in this repository because Gno and TM2 tooling use TOML-style config in several places
+
+Useful examples:
+
+- node inventory files mapping hostnames, node IDs, and roles
+- validator inventory files mapping friendly names to bech32 addresses or pubkeys
+- topology files describing validator-to-sentry relationships
+- peer alias files mapping peer IDs to human-readable labels
+
+Suggested flag:
+
+- `--metadata <path>` for one or more TOML metadata files
+- `--generate-metadata <path>` to write an inferred TOML metadata file during `doctor inspect`
+
+Copyable example:
+
+```toml
+version = 1
+chain_id = "test5"
+
+[nodes.validator_1]
+role = "validator"
+files = ["./logs/validator-1.log"]
+node_id = "3b1f4d8e9c2a7f1a6d0b4c8e2f9a7c1d3e5f7a9b"
+validator_name = "validator-1"
+validator_address = "g1jg8mtutu9khhfwc4nxmuhcpftf0pajdhfvsqf5"
+validator_pubkey = "gpub1pgfj7ard9eg82cjtv4u4xetrwqer2dntxyfzxz3pq0skzdkmzu0r9h6gny6eg8c9dc303xrrudee6z4he4y7cs5rnjwmyf40yaj"
+
+[nodes.sentry_a]
+role = "sentry"
+files = ["./logs/sentry-a.log"]
+node_id = "91aa0d52ef8a2f6c84921f70839aa8a32e2b2b11"
+
+[nodes.sentry_b]
+role = "sentry"
+files = ["./logs/sentry-b.log"]
+node_id = "6f64b3f7b2f74d9d6db4f5a738b52fc1a3de2ad4"
+
+[topology]
+validator_to_sentries = { validator_1 = ["sentry_a", "sentry_b"] }
+
+[peer_aliases]
+"c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8090a1b2c" = "public-seed-1"
+"d9e8f7a6b5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0" = "public-validator-2"
+```
+
+Minimum useful file:
+
+```toml
+version = 1
+
+[nodes.validator_1]
+role = "validator"
+files = ["./logs/validator-1.log"]
+```
+
 ## Output
 
 ### Human-readable report
@@ -209,7 +279,7 @@ The tool should be organized as five layers:
 1. `cmd/doctor`
    CLI, flags, exit codes, report rendering
 2. `internal/input`
-   file loading, log file expansion, gzip support if added later
+   file loading, log file expansion, metadata loading
 3. `internal/parse`
    genesis parsing and log parsing
 4. `internal/model`
@@ -217,7 +287,12 @@ The tool should be organized as five layers:
 5. `internal/analyze`
    rule engine that emits findings
 
-Suggested repository shape if implemented as a contrib tool:
+Repository placement:
+
+- implement this in `contribs/` immediately
+- use a standalone contrib binary and README from the start
+
+Suggested repository shape:
 
 ```text
 contribs/gnodoctor/
@@ -323,6 +398,19 @@ Each event should keep:
 - handle out-of-order lines by sorting on parsed timestamps when possible
 - preserve original ordering when timestamps are equal or missing
 - continue past malformed lines and report parser warnings
+
+### Reliability policy by log format
+
+JSON logs are the reference format for reliable analysis.
+
+Console logs must still be supported for core offline diagnostics, but only on a best-effort basis:
+
+- core findings should still work when console logs are the only input
+- field extraction may be incomplete or ambiguous compared to JSON logs
+- parser warnings should be surfaced when console parsing loses structure
+- confidence should be reduced when conclusions depend on ambiguous console-only evidence
+
+Compressed logs are out of scope for the first release.
 
 ### Message matching strategy
 
@@ -713,6 +801,8 @@ The initial release only needs one main subcommand, but this layout leaves room 
 - `--log <path>`
 - `--validator-log <path>`
 - `--sentry-log <path>`
+- `--metadata <path>`
+- `--generate-metadata <path>`
 - `--node <name>=<path>`
 - `--role <name>=<role>`
 - `--format text|json`
@@ -721,6 +811,198 @@ The initial release only needs one main subcommand, but this layout leaves room 
 - `--strict`
 - `--verbose`
 - `--max-findings <n>`
+
+### Flag semantics
+
+#### `--genesis <path>`
+
+- required for `doctor inspect`
+- path to the `genesis.json` used as the reference chain definition
+- exactly one file
+- parse failure is a hard input error with exit code `2`
+
+#### `--log <path>`
+
+- add a generic log source
+- role is initially `unknown`
+- may be repeated
+- accepts file paths only in v1; compressed logs are not supported
+- shell globbing is left to the shell, not implemented by the CLI itself
+
+Use this when the operator has logs but does not want to classify them up front.
+
+#### `--validator-log <path>`
+
+- add a log source and assign role `validator`
+- may be repeated
+- same parsing rules as `--log`
+
+This is a convenience flag equivalent to:
+
+```sh
+doctor inspect --log ./validator.log --role <inferred-or-bound-node>=validator
+```
+
+but without requiring the node name to be known ahead of time.
+
+#### `--sentry-log <path>`
+
+- add a log source and assign role `sentry`
+- may be repeated
+- same parsing rules as `--log`
+
+This is mainly used to help topology-aware checks and to prevent sentry logs from being misinterpreted as validator logs.
+
+#### `--metadata <path>`
+
+- load an optional TOML metadata file
+- may be repeated
+- later metadata files override earlier ones on key conflicts
+- metadata supplements logs; it does not silently replace contradictory log evidence
+
+Supported uses:
+
+- assign friendly node names
+- assign or override node roles
+- map validator pubkeys or addresses to friendly names
+- describe validator-to-sentry topology
+- map peer IDs to aliases
+
+If metadata contradicts strong evidence from logs, `doctor` should emit a parser or validation warning. Under `--strict`, that becomes an input error.
+
+#### `--generate-metadata <path>`
+
+- write a TOML metadata file during `doctor inspect`
+- exactly one output path
+- intended to help the operator bootstrap a metadata file from partial information already visible in the supplied logs and genesis
+- generation happens as part of inspection, not as a separate mode
+
+Expected behavior:
+
+- inspect logs and genesis as usual
+- infer whatever identity information is available with reasonable confidence
+- write a TOML file containing named nodes, roles, file bindings, detected node IDs, validator addresses or pubkeys when available, and empty sections where manual completion is expected
+- keep user-supplied metadata untouched; this flag writes a new file, it does not rewrite existing metadata in place unless the target path is explicitly reused
+
+Suggested use:
+
+```sh
+doctor inspect \
+  --genesis ./genesis.json \
+  --validator-log ./logs/validator.log \
+  --sentry-log ./logs/sentry-a.log \
+  --generate-metadata ./doctor-metadata.toml
+```
+
+Generated output should be safe to copy, edit, and feed back into a later run:
+
+```sh
+doctor inspect \
+  --genesis ./genesis.json \
+  --metadata ./doctor-metadata.toml \
+  --log ./logs/*
+```
+
+Rules:
+
+- if the output file already exists, require an explicit overwrite flag in a later revision or fail with an input error in v1
+- generation should never downgrade analysis quality if writing the file fails; the inspection report should still be produced, with an added warning about metadata export failure
+
+#### `--node <name>=<path>`
+
+- bind a friendly node name to a specific log path
+- may be repeated
+- intended for cases where file names are not descriptive enough
+
+Example:
+
+```sh
+doctor inspect \
+  --genesis ./genesis.json \
+  --node validator-1=./logs/node-a.log \
+  --role validator-1=validator
+```
+
+If the same file is provided both with `--node` and `--log`, the tool should deduplicate the source and keep the explicit node name.
+
+#### `--role <name>=<role>`
+
+- assign a role to a named node
+- allowed values in v1: `validator`, `sentry`, `seed`, `unknown`
+- may be repeated
+
+This only applies to nodes named through:
+
+- `--node`
+- metadata files
+- identities inferred from logs and promoted into named nodes
+
+If `--role` references an unknown node name, that is a validation error.
+
+#### `--format text|json`
+
+- select output renderer
+- default: `text`
+
+Behavior:
+
+- `text`: concise operator-facing incident report
+- `json`: stable machine-readable report for CI and tooling
+
+#### `--since <rfc3339>`
+
+- lower bound of the analysis window
+- events strictly older than this timestamp are excluded from rule evaluation
+- parsing still occurs before filtering so input quality warnings can still be reported
+
+This is useful when supplied logs cover many hours but the incident window is known.
+
+#### `--until <rfc3339>`
+
+- upper bound of the analysis window
+- events newer than this timestamp are excluded from rule evaluation
+- same filtering rules as `--since`
+
+If `--until` is earlier than `--since`, that is a validation error.
+
+#### `--strict`
+
+- make input hygiene and evidence quality enforceable
+- default: `false`
+
+When enabled, the command should still attempt analysis, but it must exit non-zero if any of the following remain unresolved:
+
+- unsupported log format for any supplied file
+- unparseable timestamps on lines needed for ordering or correlation
+- unresolved node identity when a rule depends on node attribution
+- contradictory metadata versus log-derived identity
+- parser warnings above a configured threshold
+- invalid flag combinations or references to unknown named nodes
+
+Recommended exit behavior under `--strict`:
+
+- exit `2` for input-quality failures
+- exit `1` for successful analysis that found critical operational issues
+
+In other words, `--strict` is for CI, automation, and disciplined incident workflows where ambiguous input should fail fast instead of producing a soft warning.
+
+#### `--verbose`
+
+- include low-severity findings, parser warnings, and supporting evidence that is omitted from the default text report
+- default: `false`
+
+`--verbose` affects presentation, not the analyzer itself.
+
+#### `--max-findings <n>`
+
+- cap the number of findings rendered in the `text` report
+- default: `20`
+- must be greater than `0`
+
+This is a presentation limit, not an analysis limit:
+
+- text output shows the top `n` findings by severity and confidence
+- JSON output should still contain the full findings set unless a separate pagination flag is added later
 
 ## Report Design Requirements
 
@@ -790,6 +1072,7 @@ Improve cross-node correlation:
 - incident phase segmentation
 - confidence scoring improvements
 - VoteSet quorum tracking from bit arrays
+- metadata-file based node and topology enrichment
 
 ### Phase 3
 
@@ -798,15 +1081,15 @@ Optional deeper diagnostics:
 - remote signer diagnosis
 - topology inference
 - richer proposer analysis
-- optional RPC enrichment if live mode is ever added
+- optional RPC enrichment against a live or replayed endpoint
 
-## Open Questions
+## Resolved Decisions
 
-- Should the tool remain purely offline, or later support optional RPC enrichment?
-- Should node identity come only from logs, or also from optional metadata files?
-- Should console-log support be best-effort only, with JSON logs recommended for reliable analysis?
-- Should the tool support compressed logs in the first release?
-- Should this live in `contribs/` immediately, or start as a standalone design doc plus fixtures?
+- remain offline-first in the initial design, with optional RPC enrichment added later
+- support node identity from logs and from optional metadata files
+- support console logs on a best-effort basis, with JSON logs recommended for reliable analysis
+- do not support compressed logs in the first release
+- implement the tool in `contribs/` immediately
 
 ## Recommendation
 
