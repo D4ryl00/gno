@@ -153,18 +153,19 @@ type Finding struct {
 }
 
 type NodeSummary struct {
-	Name           string    `json:"name"`
-	Role           Role      `json:"role"`
-	Files          []string  `json:"files"`
-	Start          time.Time `json:"start,omitempty"`
-	End            time.Time `json:"end,omitempty"`
-	EventCount     int       `json:"event_count"`
-	HighestCommit  int64     `json:"highest_commit"`
-	CommitCount    int       `json:"commit_count"`
-	TimeoutCount   int       `json:"timeout_count"`
-	MaxPeers       int       `json:"max_peers"`
-	CurrentPeers   int       `json:"current_peers"`
-	ParserWarnings int       `json:"parser_warnings"`
+	Name           string     `json:"name"`
+	Role           Role       `json:"role"`
+	Files          []string   `json:"files"`
+	Start          time.Time  `json:"start,omitempty"`
+	End            time.Time  `json:"end,omitempty"`
+	EventCount     int        `json:"event_count"`
+	HighestCommit  int64      `json:"highest_commit"`
+	CommitCount    int        `json:"commit_count"`
+	TimeoutCount   int        `json:"timeout_count"`
+	TimeoutSamples []Evidence `json:"timeout_samples,omitempty"`
+	MaxPeers       int        `json:"max_peers"`
+	CurrentPeers   int        `json:"current_peers"`
+	ParserWarnings int        `json:"parser_warnings"`
 }
 
 type InputSummary struct {

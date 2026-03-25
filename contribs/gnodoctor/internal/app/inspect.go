@@ -18,6 +18,7 @@ import (
 )
 
 type inspectCfg struct {
+	configPath       string
 	genesisPath      string
 	logPaths         multiString
 	validatorLogs    multiString
@@ -31,7 +32,9 @@ type inspectCfg struct {
 	untilRaw         string
 	strict           bool
 	verbose          bool
+	showUnclassified bool
 	maxFindings      int
+	maxHealth        int
 }
 
 type multiString []string
@@ -59,6 +62,7 @@ func newInspectCmd(io commands.IO) *commands.Command {
 }
 
 func (c *inspectCfg) RegisterFlags(fs *flag.FlagSet) {
+	fs.StringVar(&c.configPath, "config", "", "path to a TOML config file (default: $XDG_CONFIG_HOME/gnodoctor/config.toml)")
 	fs.StringVar(&c.genesisPath, "genesis", "", "path to the genesis.json")
 	fs.Var(&c.logPaths, "log", "generic log file path; may be repeated")
 	fs.Var(&c.validatorLogs, "validator-log", "validator log file path; may be repeated")
@@ -67,20 +71,49 @@ func (c *inspectCfg) RegisterFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.generateMetadata, "generate-metadata", "", "write inferred TOML metadata during inspection")
 	fs.Var(&c.nodeBindings, "node", "bind a node name to a log path as <name>=<path>")
 	fs.Var(&c.roleBindings, "role", "assign a role to a node as <name>=<role>")
-	fs.StringVar(&c.outputFormat, "format", "text", "report format: text or json")
+	fs.StringVar(&c.outputFormat, "format", "", "report format: text or json (default: text)")
 	fs.StringVar(&c.sinceRaw, "since", "", "lower bound of the analysis window in RFC3339")
 	fs.StringVar(&c.untilRaw, "until", "", "upper bound of the analysis window in RFC3339")
 	fs.BoolVar(&c.strict, "strict", false, "fail on unresolved input quality issues")
-	fs.BoolVar(&c.verbose, "verbose", false, "include warnings and low-severity findings in text output")
-	fs.IntVar(&c.maxFindings, "max-findings", 20, "maximum number of findings rendered in text output")
+	fs.BoolVar(&c.verbose, "verbose", false, "include low-severity findings; show event details in health summary")
+	fs.BoolVar(&c.verbose, "v", false, "shorthand for -verbose")
+	fs.BoolVar(&c.showUnclassified, "show-unclassified", false, "print unclassified log lines at the end of the report")
+	fs.IntVar(&c.maxFindings, "max-findings", 0, "maximum number of findings rendered in text output (default: 20)")
+	fs.IntVar(&c.maxHealth, "max-health", 0, "maximum number of nodes shown in health summary (default: 5; 0 in verbose)")
 }
 
 func execInspect(_ context.Context, cfg *inspectCfg, io commands.IO) error {
+	// Load config file and apply defaults for flags left at their sentinel (zero) values.
+	ucfg, err := loadConfig(cfg.configPath)
+	if err != nil {
+		return err
+	}
+	cfg.verbose = cfg.verbose || ucfg.Verbose
+	cfg.strict = cfg.strict || ucfg.Strict
+	if cfg.outputFormat == "" {
+		if ucfg.Format != "" {
+			cfg.outputFormat = ucfg.Format
+		} else {
+			cfg.outputFormat = "text"
+		}
+	}
+	if cfg.maxFindings == 0 {
+		if ucfg.MaxFindings > 0 {
+			cfg.maxFindings = ucfg.MaxFindings
+		} else {
+			cfg.maxFindings = 20
+		}
+	}
+	if cfg.maxHealth == 0 && !cfg.verbose {
+		if ucfg.MaxHealth > 0 {
+			cfg.maxHealth = ucfg.MaxHealth
+		} else {
+			cfg.maxHealth = 5
+		}
+	}
+
 	if cfg.genesisPath == "" {
 		return errors.New("missing required --genesis")
-	}
-	if cfg.maxFindings <= 0 {
-		return errors.New("--max-findings must be greater than 0")
 	}
 
 	since, until, err := parseWindow(cfg.sinceRaw, cfg.untilRaw)
@@ -173,7 +206,12 @@ func execInspect(_ context.Context, cfg *inspectCfg, io commands.IO) error {
 
 	switch cfg.outputFormat {
 	case "text":
-		io.Printf("%s", render.Text(report, cfg.verbose, cfg.maxFindings))
+		io.Printf("%s", render.Text(report, render.TextOptions{
+			Verbose:          cfg.verbose,
+			ShowUnclassified: cfg.showUnclassified,
+			MaxFindings:      cfg.maxFindings,
+			MaxHealth:        cfg.maxHealth,
+		}))
 	case "json":
 		payload, jsonErr := render.JSON(report)
 		if jsonErr != nil {

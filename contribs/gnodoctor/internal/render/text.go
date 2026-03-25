@@ -7,7 +7,15 @@ import (
 	"github.com/gnolang/gno/contribs/gnodoctor/internal/model"
 )
 
-func Text(report model.Report, verbose bool, maxFindings int) string {
+// TextOptions controls the text renderer behaviour.
+type TextOptions struct {
+	Verbose          bool
+	ShowUnclassified bool // show parser warnings for unclassified log lines
+	MaxFindings      int  // 0 = unlimited
+	MaxHealth        int  // max node sections in health summary (0 = unlimited)
+}
+
+func Text(report model.Report, opts TextOptions) string {
 	var b strings.Builder
 
 	fmt.Fprintf(&b, "Chain: %s\n", report.Input.ChainID)
@@ -33,11 +41,46 @@ func Text(report model.Report, verbose bool, maxFindings int) string {
 	if report.MetadataGeneratedPath != "" {
 		fmt.Fprintf(&b, "- Metadata template written to %s\n", report.MetadataGeneratedPath)
 	}
-	for _, node := range report.Nodes {
-		if node.TimeoutCount > 0 {
-			fmt.Fprintf(&b, "- %s saw %d timeout events\n", node.Name, node.TimeoutCount)
+
+	shown := 0
+	for i, node := range report.Nodes {
+		hasTimeouts := node.TimeoutCount > 0
+		hasPeers := node.MaxPeers > 0
+		if !hasTimeouts && !hasPeers {
+			continue
 		}
-		if node.MaxPeers > 0 {
+		if opts.MaxHealth > 0 && !opts.Verbose && shown >= opts.MaxHealth {
+			remaining := 0
+			for _, n := range report.Nodes[i:] {
+				if n.TimeoutCount > 0 || n.MaxPeers > 0 {
+					remaining++
+				}
+			}
+			fmt.Fprintf(&b, "- ... %d more node(s) omitted; use --verbose to see all\n", remaining)
+			break
+		}
+		shown++
+
+		if hasTimeouts {
+			plural := "s"
+			if node.TimeoutCount == 1 {
+				plural = ""
+			}
+			fmt.Fprintf(&b, "- %s saw %d timeout event%s\n", node.Name, node.TimeoutCount, plural)
+			if opts.Verbose {
+				for _, sample := range node.TimeoutSamples {
+					if sample.Path != "" {
+						fmt.Fprintf(&b, "  %s:%d %s\n", sample.Path, sample.Line, sample.Message)
+					} else {
+						fmt.Fprintf(&b, "  %s\n", sample.Message)
+					}
+				}
+				if node.TimeoutCount > len(node.TimeoutSamples) {
+					fmt.Fprintf(&b, "  ... %d more\n", node.TimeoutCount-len(node.TimeoutSamples))
+				}
+			}
+		}
+		if hasPeers {
 			fmt.Fprintf(&b, "- %s peer count max=%d current=%d\n", node.Name, node.MaxPeers, node.CurrentPeers)
 		}
 	}
@@ -45,11 +88,11 @@ func Text(report model.Report, verbose bool, maxFindings int) string {
 	b.WriteString("\nFindings\n")
 	rendered := 0
 	for _, finding := range report.Findings {
-		if !verbose && (finding.Severity == model.SeverityInfo || finding.Severity == model.SeverityLow) {
+		if !opts.Verbose && (finding.Severity == model.SeverityInfo || finding.Severity == model.SeverityLow) {
 			continue
 		}
 		rendered++
-		if maxFindings > 0 && rendered > maxFindings {
+		if opts.MaxFindings > 0 && rendered > opts.MaxFindings {
 			break
 		}
 		fmt.Fprintf(&b, "[%s] %s\n", finding.Severity, finding.Title)
@@ -72,8 +115,8 @@ func Text(report model.Report, verbose bool, maxFindings int) string {
 		}
 	}
 
-	if verbose && len(report.Warnings) > 0 {
-		b.WriteString("\nWarnings\n")
+	if opts.ShowUnclassified && len(report.Warnings) > 0 {
+		b.WriteString("\nUnclassified log lines\n")
 		for _, warning := range report.Warnings {
 			fmt.Fprintf(&b, "- %s\n", warning)
 		}

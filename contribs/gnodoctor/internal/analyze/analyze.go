@@ -100,6 +100,15 @@ func buildNodeSummaries(sources []model.Source, events []model.Event) []model.No
 			}
 		case model.EventTimeout:
 			summary.TimeoutCount++
+			if len(summary.TimeoutSamples) < 3 {
+				summary.TimeoutSamples = append(summary.TimeoutSamples, model.Evidence{
+					Node:      event.Node,
+					Timestamp: formatMaybeTime(event.Timestamp),
+					Path:      event.Path,
+					Line:      event.Line,
+					Message:   event.Message,
+				})
+			}
 		case model.EventAddedPeer:
 			summary.CurrentPeers++
 			if summary.CurrentPeers > summary.MaxPeers {

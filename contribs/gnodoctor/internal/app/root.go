@@ -15,7 +15,10 @@ func NewRootCmd(io commands.IO) *commands.Command {
 		commands.HelpExec,
 	)
 
-	cmd.AddSubCommands(newInspectCmd(io))
+	cmd.AddSubCommands(
+		newInspectCmd(io),
+		newConfigCmd(io),
+	)
 
 	return cmd
 }
