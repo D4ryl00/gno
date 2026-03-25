@@ -16,6 +16,7 @@ var (
 	containerPrefixRE = regexp.MustCompile(`^[A-Za-z0-9_.-]+\s+\|\s+`)
 	ansiRE            = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 	heightRoundRE     = regexp.MustCompile(`\((\d+)\/(-?\d+)\)`)
+	voteSetRE         = regexp.MustCompile(`\+2/3:([^(]+)\([^)]+\) BA\{(\d+):([x_]+)\}`)
 )
 
 func ParseLogFile(source model.Source, data []byte) ([]model.Event, []string) {
@@ -240,6 +241,12 @@ func classifyMessage(msg string) model.EventKind {
 		return model.EventNoPeersToShare
 
 	// Consensus — check specific sub-messages before generic ones
+	case strings.Contains(msg, "Added to prevote"):
+		return model.EventAddedPrevote
+	case strings.Contains(msg, "Added to precommit"):
+		return model.EventAddedPrecommit
+	case strings.Contains(msg, "Commit is for a block we don't know about"):
+		return model.EventCommitUnknownBlock
 	case strings.Contains(msg, "CONSENSUS FAILURE!!!"):
 		return model.EventConsensusFailure
 	case strings.Contains(msg, "Found conflicting vote from ourselves"):
@@ -289,10 +296,52 @@ func enrichEvent(event *model.Event) {
 	if event.Round == 0 {
 		event.Round = extractRound(event.Message, event.Fields)
 	}
+
+	// For prevote/precommit events, parse the VoteSet string to extract vote counts.
+	// The VoteSet is stored in "prevotes" or "precommits" field respectively.
+	if event.Kind == model.EventAddedPrevote || event.Kind == model.EventAddedPrecommit {
+		fieldName := "prevotes"
+		if event.Kind == model.EventAddedPrecommit {
+			fieldName = "precommits"
+		}
+		if vs, ok := event.Fields[fieldName].(string); ok {
+			recv, total, maj23 := parseVoteSet(vs)
+			if total > 0 {
+				event.Fields["_vrecv"] = recv
+				event.Fields["_vtotal"] = total
+				event.Fields["_vmaj23"] = maj23
+			}
+		}
+	}
+}
+
+// parseVoteSet extracts vote counts from a TM2 VoteSet string.
+// Format: VoteSet{H:19497 R:0 T:2 +2/3:<nil>(0.571) BA{7:x______} map[]}
+// Returns received (count of 'x'), total validators, and whether +2/3 majority was reached.
+func parseVoteSet(s string) (received, total int, maj23 bool) {
+	m := voteSetRE.FindStringSubmatch(s)
+	if m == nil {
+		return
+	}
+	// m[1] = "<nil>" or block hash, m[2] = total count, m[3] = bit array string
+	maj23 = m[1] != "<nil>"
+	total, _ = strconv.Atoi(m[2])
+	for _, c := range m[3] {
+		if c == 'x' {
+			received++
+		}
+	}
+	return
 }
 
 func extractHeight(msg string, fields map[string]any) int64 {
 	if value, ok := fields["height"]; ok {
+		if parsed, ok := toInt64(value); ok {
+			return parsed
+		}
+	}
+	// "Added to prevote/precommit" uses "vote height" (with a space) instead of "height".
+	if value, ok := fields["vote height"]; ok {
 		if parsed, ok := toInt64(value); ok {
 			return parsed
 		}
@@ -308,6 +357,12 @@ func extractHeight(msg string, fields map[string]any) int64 {
 
 func extractRound(msg string, fields map[string]any) int {
 	if value, ok := fields["round"]; ok {
+		if parsed, ok := toInt64(value); ok {
+			return int(parsed)
+		}
+	}
+	// "Added to prevote/precommit" uses "vote round" (with a space) instead of "round".
+	if value, ok := fields["vote round"]; ok {
 		if parsed, ok := toInt64(value); ok {
 			return int(parsed)
 		}

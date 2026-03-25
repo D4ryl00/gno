@@ -95,6 +95,9 @@ const (
 	EventRemoteSignerConnect  EventKind = "remote_signer_connected"
 	EventReceivedCompletePart EventKind = "received_complete_proposal_block"
 	EventFastSyncBlockError   EventKind = "fastsync_block_validation_error"
+	EventAddedPrevote         EventKind = "added_prevote"
+	EventAddedPrecommit       EventKind = "added_precommit"
+	EventCommitUnknownBlock   EventKind = "commit_unknown_block"
 )
 
 type Event struct {
@@ -172,6 +175,19 @@ type NodeSummary struct {
 	LastRound     int       `json:"last_round,omitempty"`
 	LastStep      string    `json:"last_step,omitempty"`
 	LastEventTime time.Time `json:"last_event_time,omitempty"`
+
+	// Vote state from the most recent VoteSet debug logs (0 = not observed).
+	VoteStateHeight   int64 `json:"vote_state_height,omitempty"`
+	PrevotesReceived  int   `json:"prevotes_received,omitempty"`
+	PrevotesTotal     int   `json:"prevotes_total,omitempty"`
+	PrevotesMaj23     bool  `json:"prevotes_maj23,omitempty"`
+	PrecommitsReceived int  `json:"precommits_received,omitempty"`
+	PrecommitsTotal   int   `json:"precommits_total,omitempty"`
+	PrecommitsMaj23   bool  `json:"precommits_maj23,omitempty"`
+
+	// Fast-sync: set when SwitchToConsensus was observed in this node's logs.
+	JoinedViaFastSync    bool  `json:"joined_via_fast_sync,omitempty"`
+	FastSyncSwitchHeight int64 `json:"fast_sync_switch_height,omitempty"`
 }
 
 type InputSummary struct {

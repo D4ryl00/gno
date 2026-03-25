@@ -126,11 +126,32 @@ func Text(report model.Report, opts TextOptions) string {
 			if !node.LastEventTime.IsZero() {
 				ts = " (last: " + node.LastEventTime.UTC().Format("15:04:05Z") + ")"
 			}
-			fmt.Fprintf(&b, "- %s [%s] height=%d round=%d%s%s%s\n",
+			fastsync := ""
+			if node.JoinedViaFastSync {
+				if node.FastSyncSwitchHeight > 0 {
+					fastsync = fmt.Sprintf(" [fast-sync@h%d]", node.FastSyncSwitchHeight)
+				} else {
+					fastsync = " [fast-sync]"
+				}
+			}
+			fmt.Fprintf(&b, "- %s [%s] height=%d round=%d%s%s%s%s\n",
 				node.Name, node.Role,
 				node.LastHeight, node.LastRound,
-				step, ts, lag,
+				step, ts, lag, fastsync,
 			)
+			if node.PrevotesTotal > 0 || node.PrecommitsTotal > 0 {
+				prevMaj, precomMaj := "", ""
+				if node.PrevotesMaj23 {
+					prevMaj = " +2/3"
+				}
+				if node.PrecommitsMaj23 {
+					precomMaj = " +2/3"
+				}
+				fmt.Fprintf(&b, "  prevotes: %d/%d%s  precommits: %d/%d%s\n",
+					node.PrevotesReceived, node.PrevotesTotal, prevMaj,
+					node.PrecommitsReceived, node.PrecommitsTotal, precomMaj,
+				)
+			}
 		}
 	}
 

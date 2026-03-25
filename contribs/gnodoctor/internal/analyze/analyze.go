@@ -125,6 +125,29 @@ func buildNodeSummaries(sources []model.Source, events []model.Event) []model.No
 			}
 		case model.EventParserWarning:
 			summary.ParserWarnings++
+		case model.EventSwitchToConsensus:
+			summary.JoinedViaFastSync = true
+			if event.Height > 0 {
+				summary.FastSyncSwitchHeight = event.Height
+			}
+		case model.EventAddedPrevote:
+			if total, ok := event.Fields["_vtotal"].(int); ok && total > 0 {
+				summary.PrevotesReceived, _ = event.Fields["_vrecv"].(int)
+				summary.PrevotesTotal = total
+				summary.PrevotesMaj23, _ = event.Fields["_vmaj23"].(bool)
+				if event.Height >= summary.VoteStateHeight {
+					summary.VoteStateHeight = event.Height
+				}
+			}
+		case model.EventAddedPrecommit:
+			if total, ok := event.Fields["_vtotal"].(int); ok && total > 0 {
+				summary.PrecommitsReceived, _ = event.Fields["_vrecv"].(int)
+				summary.PrecommitsTotal = total
+				summary.PrecommitsMaj23, _ = event.Fields["_vmaj23"].(bool)
+				if event.Height >= summary.VoteStateHeight {
+					summary.VoteStateHeight = event.Height
+				}
+			}
 		}
 	}
 
@@ -269,8 +292,10 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 	}
 
 	nodeRoles := make(map[string]model.Role, len(nodes))
+	nodeSummaries := make(map[string]model.NodeSummary, len(nodes))
 	for _, n := range nodes {
 		nodeRoles[n.Name] = n.Role
+		nodeSummaries[n.Name] = n
 	}
 
 	grouped := groupEventsByNode(events)
@@ -294,18 +319,94 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 
 		// Consensus panic — node crashed; always critical.
 		if count := countByKind(nodeEvents, model.EventConsensusFailure); count > 0 {
-			ev := firstEvidence(nodeEvents, model.EventConsensusFailure, 1)
-			// Attach the stack trace from the Fields if available.
-			if len(ev) > 0 {
-				for _, e := range nodeEvents {
-					if e.Kind == model.EventConsensusFailure {
-						if stack, ok := e.Fields["stack"].(string); ok && stack != "" {
-							ev[0].Message = ev[0].Message + "\n  stack: " + stack
+			// Find the panic event (first occurrence).
+			panicIdx := -1
+			panicHeight := int64(0)
+			panicPath := ""
+			for i, e := range nodeEvents {
+				if e.Kind == model.EventConsensusFailure {
+					panicIdx = i
+					panicHeight = e.Height
+					panicPath = e.Path
+					break
+				}
+			}
+
+			// Collect the last occurrence of each precursor kind before the panic:
+			// - When panicHeight > 0: filter by that height.
+			// - Otherwise: look back within the last 300 events in the same file
+			//   (avoids grabbing startup events from a completely different incident).
+			precursorKinds := []model.EventKind{
+				model.EventSwitchToConsensus,
+				model.EventPrevoteProposalNil,
+				model.EventPrecommitNoMaj23,
+				model.EventCommitUnknownBlock,
+				model.EventCommitBlockMissing,
+				model.EventConsensusFailure,
+			}
+			lastByKind := make(map[model.EventKind]model.Evidence)
+			for i, e := range nodeEvents {
+				if i > panicIdx {
+					break
+				}
+				if panicHeight > 0 {
+					if e.Height > 0 && e.Height != panicHeight {
+						continue
+					}
+				} else {
+					// No height on panic: limit to recent events in the same file.
+					if panicIdx-i > 300 {
+						continue
+					}
+					if panicPath != "" && e.Path != panicPath {
+						continue
+					}
+				}
+				for _, kind := range precursorKinds {
+					if e.Kind == kind {
+						msg := e.Message
+						if kind == model.EventConsensusFailure {
+							if stack, ok := e.Fields["stack"].(string); ok && stack != "" {
+								msg = msg + " | stack: " + stack
+							}
+						}
+						lastByKind[kind] = model.Evidence{
+							Node:      e.Node,
+							Timestamp: formatMaybeTime(e.Timestamp),
+							Path:      e.Path,
+							Line:      e.Line,
+							Message:   msg,
 						}
 						break
 					}
 				}
 			}
+			ev := make([]model.Evidence, 0, len(precursorKinds))
+			for _, kind := range precursorKinds {
+				if e, ok := lastByKind[kind]; ok {
+					ev = append(ev, e)
+				}
+			}
+			if len(ev) == 0 {
+				ev = firstEvidence(nodeEvents, model.EventConsensusFailure, 1)
+			}
+
+			// Detect "joined mid-round via fast-sync": if SwitchToConsensus was
+			// collected in the evidence window (height-matched or within 300 events),
+			// it happened just before the panic — the node likely panicked on its
+			// first consensus round after fast-sync.
+			possibleCauses := []string{
+				"check the panic stack trace for the root cause",
+			}
+			ns := nodeSummaries[node]
+			if ns.JoinedViaFastSync {
+				if _, switchInWindow := lastByKind[model.EventSwitchToConsensus]; switchInWindow {
+					possibleCauses = append([]string{
+						"node joined consensus mid-round via fast-sync without the proposal block",
+					}, possibleCauses...)
+				}
+			}
+
 			findings = append(findings, model.Finding{
 				ID:         "consensus-panic-" + node,
 				Title:      fmt.Sprintf("Consensus panic on %s", node),
@@ -314,8 +415,8 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 				Scope:      node,
 				Summary:    "A CONSENSUS FAILURE!!! panic was logged. The node process terminated.",
 				Evidence:   ev,
+				PossibleCauses: possibleCauses,
 				SuggestedActions: []string{
-					"check the panic stack trace for the root cause",
 					"restart the node after resolving the underlying issue",
 					"file a bug report if the panic message is `not yet implemented`",
 				},
@@ -629,15 +730,13 @@ func inferStepFromEvent(event model.Event) string {
 	switch event.Kind {
 	case model.EventSignedProposal, model.EventReceivedCompletePart:
 		return "Propose"
-	case model.EventPrevoteProposalNil:
+	case model.EventAddedPrevote, model.EventPrevoteProposalNil:
 		return "Prevote"
-	case model.EventPrecommitNoMaj23:
+	case model.EventAddedPrecommit, model.EventPrecommitNoMaj23:
 		return "Precommit"
 	case model.EventFinalizeNoMaj23:
 		return "PrecommitWait"
-	case model.EventCommitBlockMissing:
-		return "Commit"
-	case model.EventFinalizeCommit:
+	case model.EventCommitBlockMissing, model.EventCommitUnknownBlock, model.EventFinalizeCommit:
 		return "Commit"
 	case model.EventTimeout:
 		return inferStepFromTimeoutFields(event.Fields)
