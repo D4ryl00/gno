@@ -1,0 +1,11 @@
+package render
+
+import (
+	"encoding/json"
+
+	"github.com/gnolang/gno/contribs/gnodoctor/internal/model"
+)
+
+func JSON(report model.Report) ([]byte, error) {
+	return json.MarshalIndent(report, "", "  ")
+}
