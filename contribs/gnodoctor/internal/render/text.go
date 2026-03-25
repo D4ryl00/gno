@@ -44,15 +44,19 @@ func Text(report model.Report, opts TextOptions) string {
 
 	shown := 0
 	for i, node := range report.Nodes {
-		hasTimeouts := node.TimeoutCount > 0
+		// Timeout counts are only shown in verbose mode: in default mode they
+		// are either transient (node committed) or already expressed as a finding
+		// ("never finalized a block"). Showing the raw count without that context
+		// just creates confusion about missing findings.
+		showTimeouts := node.TimeoutCount > 0 && opts.Verbose
 		hasPeers := node.MaxPeers > 0
-		if !hasTimeouts && !hasPeers {
+		if !showTimeouts && !hasPeers {
 			continue
 		}
 		if opts.MaxHealth > 0 && !opts.Verbose && shown >= opts.MaxHealth {
 			remaining := 0
 			for _, n := range report.Nodes[i:] {
-				if n.TimeoutCount > 0 || n.MaxPeers > 0 {
+				if n.MaxPeers > 0 {
 					remaining++
 				}
 			}
@@ -61,7 +65,7 @@ func Text(report model.Report, opts TextOptions) string {
 		}
 		shown++
 
-		if hasTimeouts {
+		if showTimeouts {
 			plural := "s"
 			if node.TimeoutCount == 1 {
 				plural = ""
@@ -82,6 +86,51 @@ func Text(report model.Report, opts TextOptions) string {
 		}
 		if hasPeers {
 			fmt.Fprintf(&b, "- %s peer count max=%d current=%d\n", node.Name, node.MaxPeers, node.CurrentPeers)
+		}
+	}
+
+	// Consensus state section — only when at least one node has position data.
+	anyConsensusState := false
+	for _, node := range report.Nodes {
+		if node.LastHeight > 0 {
+			anyConsensusState = true
+			break
+		}
+	}
+	if anyConsensusState {
+		// Find the max height across all nodes for divergence annotation.
+		maxLastHeight := int64(0)
+		for _, node := range report.Nodes {
+			if node.LastHeight > maxLastHeight {
+				maxLastHeight = node.LastHeight
+			}
+		}
+
+		b.WriteString("\nConsensus state (end of window)\n")
+		for _, node := range report.Nodes {
+			if node.LastHeight == 0 {
+				if node.Role == model.RoleValidator {
+					fmt.Fprintf(&b, "- %s [%s] no consensus events observed\n", node.Name, node.Role)
+				}
+				continue
+			}
+			lag := ""
+			if maxLastHeight > node.LastHeight {
+				lag = fmt.Sprintf(" [!%d behind]", maxLastHeight-node.LastHeight)
+			}
+			step := ""
+			if node.LastStep != "" {
+				step = " step=" + node.LastStep
+			}
+			ts := ""
+			if !node.LastEventTime.IsZero() {
+				ts = " (last: " + node.LastEventTime.UTC().Format("15:04:05Z") + ")"
+			}
+			fmt.Fprintf(&b, "- %s [%s] height=%d round=%d%s%s%s\n",
+				node.Name, node.Role,
+				node.LastHeight, node.LastRound,
+				step, ts, lag,
+			)
 		}
 	}
 

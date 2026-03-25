@@ -109,6 +109,11 @@ func buildNodeSummaries(sources []model.Source, events []model.Event) []model.No
 					Message:   event.Message,
 				})
 			}
+		}
+
+		updateLastConsensusState(summary, event)
+
+		switch event.Kind {
 		case model.EventAddedPeer:
 			summary.CurrentPeers++
 			if summary.CurrentPeers > summary.MaxPeers {
@@ -212,6 +217,55 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 			Scope:      "global",
 			Summary:    "At least one node finalized blocks in the observed window.",
 		})
+	}
+
+	// Validator height divergence: emit when validators are at meaningfully
+	// different heights at the end of the observed window.
+	{
+		type valPos struct {
+			name   string
+			height int64
+		}
+		var valPositions []valPos
+		for _, node := range nodes {
+			if node.Role == model.RoleValidator && node.LastHeight > 0 {
+				valPositions = append(valPositions, valPos{node.Name, node.LastHeight})
+			}
+		}
+		if len(valPositions) > 1 {
+			minH, maxH := valPositions[0].height, valPositions[0].height
+			for _, vp := range valPositions[1:] {
+				if vp.height < minH {
+					minH = vp.height
+				}
+				if vp.height > maxH {
+					maxH = vp.height
+				}
+			}
+			if gap := maxH - minH; gap > 0 {
+				evidence := make([]model.Evidence, 0, len(valPositions))
+				for _, vp := range valPositions {
+					evidence = append(evidence, model.Evidence{
+						Node:    vp.name,
+						Message: fmt.Sprintf("last height: %d", vp.height),
+					})
+				}
+				findings = append(findings, model.Finding{
+					ID:         "validator-height-divergence",
+					Title:      fmt.Sprintf("Validator height divergence (gap: %d)", gap),
+					Severity:   model.SeverityHigh,
+					Confidence: model.ConfidenceMedium,
+					Scope:      "global",
+					Summary:    fmt.Sprintf("Validators are at different heights at the end of the window (min=%d, max=%d).", minH, maxH),
+					Evidence:   evidence,
+					PossibleCauses: []string{
+						"one validator crashed or was restarted mid-session",
+						"network partition isolating some validators",
+						"consensus stall on a subset of validators",
+					},
+				})
+			}
+		}
 	}
 
 	nodeRoles := make(map[string]model.Role, len(nodes))
@@ -542,4 +596,79 @@ func formatMaybeTime(ts time.Time) string {
 		return ""
 	}
 	return ts.UTC().Format(time.RFC3339)
+}
+
+// updateLastConsensusState updates a node's last known consensus position from
+// the event. Only events that carry a height > 0 are considered. When the event
+// is at a higher height (or same height, higher/equal round) than what was
+// previously recorded, the position is updated.
+func updateLastConsensusState(summary *model.NodeSummary, event model.Event) {
+	if event.Height <= 0 {
+		return
+	}
+	step := inferStepFromEvent(event)
+	advance := event.Height > summary.LastHeight ||
+		(event.Height == summary.LastHeight && event.Round > summary.LastRound) ||
+		(event.Height == summary.LastHeight && event.Round == summary.LastRound && step != "")
+
+	if advance {
+		summary.LastHeight = event.Height
+		summary.LastRound = event.Round
+		if step != "" {
+			summary.LastStep = step
+		}
+	}
+	if event.HasTimestamp && event.Timestamp.After(summary.LastEventTime) {
+		summary.LastEventTime = event.Timestamp
+	}
+}
+
+// inferStepFromEvent returns the consensus step name implied by the event kind.
+// For timeout events the step field in Fields is consulted first.
+func inferStepFromEvent(event model.Event) string {
+	switch event.Kind {
+	case model.EventSignedProposal, model.EventReceivedCompletePart:
+		return "Propose"
+	case model.EventPrevoteProposalNil:
+		return "Prevote"
+	case model.EventPrecommitNoMaj23:
+		return "Precommit"
+	case model.EventFinalizeNoMaj23:
+		return "PrecommitWait"
+	case model.EventCommitBlockMissing:
+		return "Commit"
+	case model.EventFinalizeCommit:
+		return "Commit"
+	case model.EventTimeout:
+		return inferStepFromTimeoutFields(event.Fields)
+	}
+	return ""
+}
+
+// roundStepNames maps the TM2 RoundStepType numeric values to human-readable names.
+var roundStepNames = map[int]string{
+	1: "NewHeight", 2: "NewRound", 3: "Propose",
+	4: "Prevote", 5: "PrevoteWait", 6: "Precommit",
+	7: "PrecommitWait", 8: "Commit",
+}
+
+func inferStepFromTimeoutFields(fields map[string]any) string {
+	raw, ok := fields["step"]
+	if !ok {
+		return "Timeout"
+	}
+	switch v := raw.(type) {
+	case float64:
+		if name, ok := roundStepNames[int(v)]; ok {
+			return name + "Timeout"
+		}
+	case string:
+		// e.g. "RoundStepPrevote" — strip the "RoundStep" prefix for brevity
+		name := v
+		if len(name) > len("RoundStep") {
+			name = name[len("RoundStep"):]
+		}
+		return name + "Timeout"
+	}
+	return "Timeout"
 }

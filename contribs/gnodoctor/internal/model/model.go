@@ -166,6 +166,12 @@ type NodeSummary struct {
 	MaxPeers       int        `json:"max_peers"`
 	CurrentPeers   int        `json:"current_peers"`
 	ParserWarnings int        `json:"parser_warnings"`
+
+	// Last known consensus state (updated per consensus event with Height > 0).
+	LastHeight    int64     `json:"last_height,omitempty"`
+	LastRound     int       `json:"last_round,omitempty"`
+	LastStep      string    `json:"last_step,omitempty"`
+	LastEventTime time.Time `json:"last_event_time,omitempty"`
 }
 
 type InputSummary struct {
