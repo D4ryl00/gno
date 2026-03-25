@@ -98,6 +98,9 @@ const (
 	EventAddedPrevote         EventKind = "added_prevote"
 	EventAddedPrecommit       EventKind = "added_precommit"
 	EventCommitUnknownBlock   EventKind = "commit_unknown_block"
+	EventCommitLockedBlock    EventKind = "commit_locked_block"
+	EventUnexpectedBlockPart  EventKind = "unexpected_block_part"
+	EventAddVoteError         EventKind = "add_vote_error"
 )
 
 type Event struct {

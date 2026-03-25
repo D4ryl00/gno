@@ -3,6 +3,7 @@ package analyze
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/gnolang/gno/contribs/gnodoctor/internal/model"
@@ -461,9 +462,161 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 			})
 		}
 
+		// Validator address mismatch — the genesis validator set on this node differs
+		// from what the rest of the network is using.
+		if count := countByKind(nodeEvents, model.EventAddVoteError); count > 0 {
+			// Only flag when the error is specifically a validator address mismatch.
+			addrMismatch := 0
+			for _, e := range nodeEvents {
+				if e.Kind == model.EventAddVoteError {
+					if err, ok := e.Fields["err"].(string); ok && strings.Contains(err, "invalid validator address") {
+						addrMismatch++
+					}
+				}
+			}
+			if addrMismatch > 0 {
+				findings = append(findings, model.Finding{
+					ID:         "validator-address-mismatch-" + node,
+					Title:      fmt.Sprintf("Genesis validator set mismatch on %s", node),
+					Severity:   model.SeverityCritical,
+					Confidence: model.ConfidenceHigh,
+					Scope:      node,
+					Summary: fmt.Sprintf(
+						"%d vote(s) were rejected because validator addresses in received votes do not match "+
+							"the local genesis. This node cannot participate in consensus correctly.",
+						addrMismatch,
+					),
+					Evidence: firstEvidence(nodeEvents, model.EventAddVoteError, 2),
+					PossibleCauses: []string{
+						"this node was started with a different genesis.json than the rest of the network",
+						"the genesis file was regenerated after some validators had already started",
+					},
+					SuggestedActions: []string{
+						"compare the validators section of this node's genesis.json with another node's genesis.json",
+						"restart the node with the correct genesis.json",
+					},
+				})
+			}
+		}
+
 		// CommitBlockMissing — the node reached commit phase but lacks the block.
 		// This appears transiently during catch-up; only flag when it recurs (>= 3).
 		if count := countByKind(nodeEvents, model.EventCommitBlockMissing); count >= 3 {
+			ev := firstEvidence(nodeEvents, model.EventCommitBlockMissing, 3)
+
+			// Cross-node analysis: at the first incident height, check which other
+			// nodes had the block (committed it or received the complete proposal).
+			// This reveals whether the block existed on the network but was not
+			// propagated to this node.
+			incidentHeight := int64(0)
+			for _, e := range nodeEvents {
+				if e.Kind == model.EventCommitBlockMissing && e.Height > 0 {
+					incidentHeight = e.Height
+					break
+				}
+			}
+
+			nodesWithBlock := make([]string, 0)
+			nodesAlsoMissed := make([]string, 0)
+			if incidentHeight > 0 {
+				for otherNode, otherEvents := range grouped {
+					if otherNode == node {
+						continue
+					}
+					hadBlock := false
+					alsoMissed := false
+					for _, e := range otherEvents {
+						if e.Height != incidentHeight {
+							continue
+						}
+						if e.Kind == model.EventFinalizeCommit || e.Kind == model.EventReceivedCompletePart {
+							hadBlock = true
+						}
+						if e.Kind == model.EventCommitBlockMissing {
+							alsoMissed = true
+						}
+					}
+					if hadBlock {
+						nodesWithBlock = append(nodesWithBlock, otherNode)
+					} else if alsoMissed {
+						nodesAlsoMissed = append(nodesAlsoMissed, otherNode)
+					}
+				}
+				sort.Strings(nodesWithBlock)
+				sort.Strings(nodesAlsoMissed)
+			}
+
+			// Append cross-node evidence to the finding.
+			if len(nodesWithBlock) > 0 {
+				for _, other := range nodesWithBlock {
+					ev = append(ev, model.Evidence{
+						Node:    other,
+						Message: fmt.Sprintf("had the commit block at h%d — block existed on network but was not delivered to %s", incidentHeight, node),
+					})
+				}
+			} else if len(nodesAlsoMissed) > 0 {
+				for _, other := range nodesAlsoMissed {
+					ev = append(ev, model.Evidence{
+						Node:    other,
+						Message: fmt.Sprintf("also missing the commit block at h%d — block was absent on multiple nodes", incidentHeight),
+					})
+				}
+			} else if incidentHeight > 0 {
+				ev = append(ev, model.Evidence{
+					Message: fmt.Sprintf("at h%d: no other observed node has events at this height — add logs from peers active at this height to trace propagation", incidentHeight),
+				})
+			}
+
+			// Check if block parts were received but rejected at the same heights.
+			// Collect heights where the commit block was missing.
+			missingHeights := make(map[int64]bool)
+			for _, e := range nodeEvents {
+				if e.Kind == model.EventCommitBlockMissing && e.Height > 0 {
+					missingHeights[e.Height] = true
+				}
+			}
+			// Find unexpected block parts that overlap with missing-block heights.
+			rejectedAtMissingHeight := false
+			for _, e := range nodeEvents {
+				if e.Kind == model.EventUnexpectedBlockPart && e.Height > 0 && missingHeights[e.Height] {
+					ev = append(ev, model.Evidence{
+						Node:      e.Node,
+						Timestamp: formatMaybeTime(e.Timestamp),
+						Path:      e.Path,
+						Line:      e.Line,
+						Message:   fmt.Sprintf("block part for h%d was received but rejected (node not in proposal-receive state)", e.Height),
+					})
+					rejectedAtMissingHeight = true
+					break // one example is enough
+				}
+			}
+
+			// Tailor the possible causes and suggested actions.
+			possibleCauses := []string{
+				"proposal block parts were not fully received before commit",
+				"reactor propagation failure between sentry and validator",
+			}
+			if rejectedAtMissingHeight {
+				possibleCauses = append([]string{
+					"block parts arrived but were rejected because the node was not in proposal-receive state — possible consensus state machine desync",
+				}, possibleCauses...)
+			}
+
+			suggestedActions := []string{}
+			if len(nodesWithBlock) > 0 {
+				suggestedActions = append(suggestedActions,
+					fmt.Sprintf("check peer connectivity and block-part propagation between %s and the nodes that had the block", node),
+				)
+			} else if len(nodesAlsoMissed) > 0 {
+				suggestedActions = append(suggestedActions,
+					"block was missing on multiple nodes — check whether the proposer broadcast the block parts",
+				)
+			} else {
+				suggestedActions = append(suggestedActions,
+					fmt.Sprintf("add logs from nodes that were active around h%d to trace the propagation path", incidentHeight),
+				)
+			}
+
 			findings = append(findings, model.Finding{
 				ID:         "missing-commit-block-" + node,
 				Title:      fmt.Sprintf("%s repeatedly failed to finalize because the commit block was missing locally", node),
@@ -471,15 +624,9 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 				Confidence: model.ConfidenceHigh,
 				Scope:      node,
 				Summary:    fmt.Sprintf("Seen %d times. The node reached commit processing but did not have the block required for finalization.", count),
-				Evidence:   firstEvidence(nodeEvents, model.EventCommitBlockMissing, 3),
-				PossibleCauses: []string{
-					"proposal block parts were not fully received before commit",
-					"reactor propagation failure between sentry and validator",
-				},
-				SuggestedActions: []string{
-					"inspect reactor and peer logs around the same height",
-					"compare with sentry logs for missing block-part propagation",
-				},
+				Evidence:   ev,
+				PossibleCauses: possibleCauses,
+				SuggestedActions: suggestedActions,
 			})
 		}
 

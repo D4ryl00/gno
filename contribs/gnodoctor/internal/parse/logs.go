@@ -247,6 +247,12 @@ func classifyMessage(msg string) model.EventKind {
 		return model.EventAddedPrecommit
 	case strings.Contains(msg, "Commit is for a block we don't know about"):
 		return model.EventCommitUnknownBlock
+	case strings.Contains(msg, "Commit is for locked block"):
+		return model.EventCommitLockedBlock
+	case strings.Contains(msg, "Received a block part when we're not expecting any"):
+		return model.EventUnexpectedBlockPart
+	case strings.Contains(msg, "Error attempting to add vote"):
+		return model.EventAddVoteError
 	case strings.Contains(msg, "CONSENSUS FAILURE!!!"):
 		return model.EventConsensusFailure
 	case strings.Contains(msg, "Found conflicting vote from ourselves"):
