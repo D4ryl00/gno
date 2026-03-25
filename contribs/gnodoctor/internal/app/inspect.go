@@ -182,6 +182,7 @@ func execInspect(_ context.Context, cfg *inspectCfg, io commands.IO) error {
 		Warnings: warnings,
 		Strict:   cfg.strict,
 		Verbose:  cfg.verbose,
+		Metadata: metadata,
 	})
 
 	if cfg.generateMetadata != "" {

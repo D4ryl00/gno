@@ -179,6 +179,12 @@ type NodeSummary struct {
 	LastStep      string    `json:"last_step,omitempty"`
 	LastEventTime time.Time `json:"last_event_time,omitempty"`
 
+	// Incident phase segmentation.
+	LastCommitTime      time.Time     `json:"last_commit_time,omitempty"`
+	AvgBlockTime        time.Duration `json:"avg_block_time_ns,omitempty"`
+	StallDuration       time.Duration `json:"stall_duration_ns,omitempty"`
+	MaxOutboundPeersHit int           `json:"max_outbound_peers_hit,omitempty"`
+
 	// Vote state from the most recent VoteSet debug logs (0 = not observed).
 	VoteStateHeight   int64 `json:"vote_state_height,omitempty"`
 	PrevotesReceived  int   `json:"prevotes_received,omitempty"`
@@ -191,6 +197,20 @@ type NodeSummary struct {
 	// Fast-sync: set when SwitchToConsensus was observed in this node's logs.
 	JoinedViaFastSync    bool  `json:"joined_via_fast_sync,omitempty"`
 	FastSyncSwitchHeight int64 `json:"fast_sync_switch_height,omitempty"`
+
+	// Proposer participation.
+	ProposalSignedCount int `json:"proposal_signed_count,omitempty"`
+
+	// Round escalation: highest round reached at any single height.
+	MaxRoundSeen   int   `json:"max_round_seen,omitempty"`
+	MaxRoundHeight int64 `json:"max_round_height,omitempty"`
+
+	// Remote signer cycling.
+	SignerFailureCount int `json:"signer_failure_count,omitempty"`
+	SignerConnectCount int `json:"signer_connect_count,omitempty"`
+
+	// Peer connectivity.
+	DialFailureCount int `json:"dial_failure_count,omitempty"`
 }
 
 type InputSummary struct {

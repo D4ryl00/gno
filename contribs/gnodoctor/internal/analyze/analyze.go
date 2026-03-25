@@ -16,11 +16,12 @@ type Input struct {
 	Warnings []string
 	Strict   bool
 	Verbose  bool
+	Metadata model.Metadata // optional; zero value means not provided
 }
 
 func BuildReport(input Input) model.Report {
 	nodes := buildNodeSummaries(input.Sources, input.Events)
-	findings := buildFindings(input.Genesis, nodes, input.Events, input.Warnings)
+	findings := buildFindings(input.Genesis, nodes, input.Events, input.Warnings, input.Metadata)
 
 	start, end := timeBounds(input.Events)
 	report := model.Report{
@@ -36,9 +37,25 @@ func BuildReport(input Input) model.Report {
 			Strict:          input.Strict,
 		},
 		Nodes:    nodes,
-		Findings: findings,
 		Warnings: append([]string(nil), input.Warnings...),
 	}
+
+	// Downgrade global finding confidence when only one node has events —
+	// a single-node view cannot confirm network-wide conclusions.
+	nodesWithEvents := 0
+	for _, n := range nodes {
+		if n.EventCount > 0 {
+			nodesWithEvents++
+		}
+	}
+	if nodesWithEvents <= 1 {
+		for i, f := range findings {
+			if f.Scope == "global" && f.Confidence == model.ConfidenceHigh {
+				findings[i].Confidence = model.ConfidenceMedium
+			}
+		}
+	}
+	report.Findings = findings
 
 	for _, finding := range findings {
 		if finding.Severity == model.SeverityCritical {
@@ -62,6 +79,9 @@ func BuildReport(input Input) model.Report {
 
 func buildNodeSummaries(sources []model.Source, events []model.Event) []model.NodeSummary {
 	summaries := map[string]*model.NodeSummary{}
+	firstCommitByNode := map[string]time.Time{}
+	// Per-node: height → max round seen at that height.
+	maxRoundByNode := map[string]map[int64]int{}
 
 	for _, source := range sources {
 		if _, ok := summaries[source.Node]; !ok {
@@ -99,6 +119,16 @@ func buildNodeSummaries(sources []model.Source, events []model.Event) []model.No
 			if event.Height > summary.HighestCommit {
 				summary.HighestCommit = event.Height
 			}
+			if event.HasTimestamp {
+				if firstCommitByNode[event.Node].IsZero() {
+					firstCommitByNode[event.Node] = event.Timestamp
+				}
+				if event.Timestamp.After(summary.LastCommitTime) {
+					summary.LastCommitTime = event.Timestamp
+				}
+			}
+		case model.EventMaxOutboundPeers:
+			summary.MaxOutboundPeersHit++
 		case model.EventTimeout:
 			summary.TimeoutCount++
 			if len(summary.TimeoutSamples) < 3 {
@@ -149,7 +179,51 @@ func buildNodeSummaries(sources []model.Source, events []model.Event) []model.No
 					summary.VoteStateHeight = event.Height
 				}
 			}
+		case model.EventSignedProposal:
+			summary.ProposalSignedCount++
+		case model.EventRemoteSignerFailure:
+			summary.SignerFailureCount++
+		case model.EventRemoteSignerConnect:
+			summary.SignerConnectCount++
+		case model.EventDialFailure:
+			summary.DialFailureCount++
 		}
+
+		// Track the highest round seen at each height for round-escalation detection.
+		if event.Height > 0 && event.Round > 0 {
+			if maxRoundByNode[event.Node] == nil {
+				maxRoundByNode[event.Node] = map[int64]int{}
+			}
+			if event.Round > maxRoundByNode[event.Node][event.Height] {
+				maxRoundByNode[event.Node][event.Height] = event.Round
+			}
+		}
+	}
+
+	// Second pass: compute derived timing fields now that all events are consumed.
+	for name, summary := range summaries {
+		if summary.CommitCount >= 2 && !summary.LastCommitTime.IsZero() {
+			if first, ok := firstCommitByNode[name]; ok {
+				span := summary.LastCommitTime.Sub(first)
+				if span > 0 {
+					summary.AvgBlockTime = span / time.Duration(summary.CommitCount-1)
+				}
+			}
+		}
+		if !summary.LastCommitTime.IsZero() && !summary.End.IsZero() &&
+			summary.End.After(summary.LastCommitTime) {
+			summary.StallDuration = summary.End.Sub(summary.LastCommitTime)
+		}
+		// Compute max round seen across all heights for this node.
+		if rounds, ok := maxRoundByNode[name]; ok {
+			for h, r := range rounds {
+				if r > summary.MaxRoundSeen || (r == summary.MaxRoundSeen && h > summary.MaxRoundHeight) {
+					summary.MaxRoundSeen = r
+					summary.MaxRoundHeight = h
+				}
+			}
+		}
+		summaries[name] = summary
 	}
 
 	list := make([]model.NodeSummary, 0, len(summaries))
@@ -163,7 +237,7 @@ func buildNodeSummaries(sources []model.Source, events []model.Event) []model.No
 	return list
 }
 
-func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []model.Event, warnings []string) []model.Finding {
+func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []model.Event, warnings []string, meta model.Metadata) []model.Finding {
 	findings := make([]model.Finding, 0)
 
 	if genesis.ValidatorNum == 0 {
@@ -718,21 +792,450 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 			})
 		}
 
-		if count := countByKind(nodeEvents, model.EventRemoteSignerFailure); count > 0 {
-			findings = append(findings, model.Finding{
-				ID:         "remote-signer-failure-" + node,
-				Title:      fmt.Sprintf("Remote signer failures on %s", node),
-				Severity:   model.SeverityHigh,
-				Confidence: model.ConfidenceMedium,
-				Scope:      node,
-				Summary:    fmt.Sprintf("%d signing request failure(s) observed.", count),
-				Evidence:   firstEvidence(nodeEvents, model.EventRemoteSignerFailure, 2),
-				PossibleCauses: []string{
+		ns := nodeSummaries[node]
+		if ns.SignerFailureCount > 0 {
+			// Detect reconnection cycling: multiple failures with reconnects in between.
+			isCycling := ns.SignerFailureCount >= 2 && ns.SignerConnectCount >= 1
+			sev := model.SeverityHigh
+			var possibleCauses []string
+			var suggestedActions []string
+			var summary string
+			if isCycling {
+				summary = fmt.Sprintf(
+					"Remote signer cycled %d time(s): %d signing failure(s) with %d reconnect(s). "+
+						"The KMS connection was unstable during the incident window.",
+					ns.SignerConnectCount, ns.SignerFailureCount, ns.SignerConnectCount,
+				)
+				possibleCauses = []string{
+					"KMS process crashing or restarting repeatedly",
+					"network instability between the validator and the KMS host",
+					"KMS socket or TCP connection timing out under load",
+				}
+				suggestedActions = []string{
+					"check KMS process logs for crashes or restarts during the incident window",
+					"verify network stability between validator and KMS host",
+					"review KMS connection timeout configuration",
+				}
+			} else {
+				summary = fmt.Sprintf("%d signing request failure(s) observed.", ns.SignerFailureCount)
+				possibleCauses = []string{
 					"KMS process not running or not reachable on the configured socket",
 					"key not loaded in the KMS",
+				}
+				suggestedActions = []string{
+					"verify the KMS process is running and the socket path matches config",
+				}
+			}
+			// Correlate: if this node never signed proposals while having signer failures,
+			// the signer was unavailable the entire time — severity escalates to critical.
+			if ns.ProposalSignedCount == 0 && ns.Role == model.RoleValidator {
+				sev = model.SeverityCritical
+				summary += " No proposals were signed during this window — the validator was unable to propose."
+			}
+			findings = append(findings, model.Finding{
+				ID:             "remote-signer-failure-" + node,
+				Title:          fmt.Sprintf("Remote signer failures on %s", node),
+				Severity:       sev,
+				Confidence:     model.ConfidenceMedium,
+				Scope:          node,
+				Summary:        summary,
+				Evidence:       firstEvidence(nodeEvents, model.EventRemoteSignerFailure, 2),
+				PossibleCauses: possibleCauses,
+				SuggestedActions: suggestedActions,
+			})
+		}
+
+		// ── Round escalation ─────────────────────────────────────────────────
+		// Flag when a node reached high rounds at a single height, indicating
+		// repeated consensus failures before that height was committed (or not).
+		if ns.MaxRoundSeen >= 3 {
+			findings = append(findings, model.Finding{
+				ID:    "round-escalation-" + node,
+				Title: fmt.Sprintf("%s reached round %d at height %d", node, ns.MaxRoundSeen, ns.MaxRoundHeight),
+				Severity:   model.SeverityMedium,
+				Confidence: model.ConfidenceMedium,
+				Scope:      node,
+				Summary: fmt.Sprintf(
+					"Consensus at height %d required at least %d round(s) before committing or stalling. "+
+						"Multiple rounds at the same height indicate repeated agreement failures.",
+					ns.MaxRoundHeight, ns.MaxRoundSeen,
+				),
+				PossibleCauses: []string{
+					"proposer repeatedly failed to deliver a valid proposal block",
+					"quorum was borderline: a single absent or slow validator forced round changes",
+					"network latency between nodes exceeded consensus timeout thresholds",
 				},
 				SuggestedActions: []string{
-					"verify the KMS process is running and the socket path matches config",
+					fmt.Sprintf("examine logs from all validators around height %d to find which step stalled", ns.MaxRoundHeight),
+					"compare timeout_propose and timeout_commit in config.toml against observed block times",
+				},
+			})
+		}
+
+		// ── Repeated dial failures ────────────────────────────────────────────
+		if ns.DialFailureCount >= 5 {
+			findings = append(findings, model.Finding{
+				ID:    "dial-failures-" + node,
+				Title: fmt.Sprintf("%s had %d dial failures to peers", node, ns.DialFailureCount),
+				Severity:   model.SeverityMedium,
+				Confidence: model.ConfidenceMedium,
+				Scope:      node,
+				Summary: fmt.Sprintf(
+					"%d outbound dial attempts failed. This may indicate misconfigured persistent_peers "+
+						"or a network-level barrier preventing outbound connections.",
+					ns.DialFailureCount,
+				),
+				Evidence: firstEvidence(nodeEvents, model.EventDialFailure, 3),
+				PossibleCauses: []string{
+					"persistent_peers list contains stale addresses or incorrect node IDs",
+					"firewall rules blocking outbound connections on the P2P port",
+					"peer nodes are offline or have changed their listening address",
+				},
+				SuggestedActions: []string{
+					"verify that all addresses in persistent_peers are reachable and listening",
+					"check whether the target peers are online and accepting connections",
+				},
+			})
+		}
+	}
+
+	// ── Stall detection ─────────────────────────────────────────────────────
+	// Flag when a node's last commit was well before the end of its log window,
+	// suggesting it halted or lost quorum.
+	for _, node := range nodes {
+		if node.StallDuration <= 0 || node.LastCommitTime.IsZero() {
+			continue
+		}
+		threshold := 60 * time.Second
+		if node.AvgBlockTime > 0 {
+			if dyn := 5 * node.AvgBlockTime; dyn > 30*time.Second {
+				threshold = dyn
+			} else {
+				threshold = 30 * time.Second
+			}
+		}
+		if node.StallDuration < threshold {
+			continue
+		}
+		// Lower confidence when only this node has events after the stall point.
+		conf := model.ConfidenceMedium
+		active := 0
+		for _, n := range nodes {
+			if !n.LastEventTime.IsZero() && n.LastEventTime.After(node.LastCommitTime) {
+				active++
+			}
+		}
+		if active <= 1 {
+			conf = model.ConfidenceLow
+		}
+		findings = append(findings, model.Finding{
+			ID:         "stall-after-last-commit-" + node.Name,
+			Title:      fmt.Sprintf("%s: no commits for %s after height %d", node.Name, formatDuration(node.StallDuration), node.HighestCommit),
+			Severity:   model.SeverityHigh,
+			Confidence: conf,
+			Scope:      node.Name,
+			Summary: fmt.Sprintf(
+				"Last commit at h%d; no further commits observed for %s to the end of the log window.%s",
+				node.HighestCommit,
+				formatDuration(node.StallDuration),
+				func() string {
+					if node.AvgBlockTime > 0 {
+						return fmt.Sprintf(" Average block time was %s.", formatDuration(node.AvgBlockTime))
+					}
+					return ""
+				}(),
+			),
+			PossibleCauses: []string{
+				"quorum loss after height " + fmt.Sprintf("%d", node.HighestCommit),
+				"node crash or OOM kill",
+				"network partition or peer isolation",
+			},
+			SuggestedActions: []string{
+				fmt.Sprintf("provide logs from after %s to confirm whether the node recovered", node.LastCommitTime.UTC().Format(time.RFC3339)),
+				"check whether the node process is still running",
+			},
+		})
+	}
+
+	// ── Sentry vs validator cross-role analysis ───────────────────────────────
+	{
+		var isolatedValidators []model.NodeSummary
+		var reachableSentries []model.NodeSummary
+		for _, n := range nodes {
+			if n.Role == model.RoleValidator && n.CurrentPeers == 0 && n.MaxPeers > 0 {
+				isolatedValidators = append(isolatedValidators, n)
+			}
+			if n.Role == model.RoleSentry && n.MaxPeers > 0 {
+				reachableSentries = append(reachableSentries, n)
+			}
+		}
+
+		if len(isolatedValidators) > 0 && len(reachableSentries) > 0 {
+			// Topology-aware: emit precise per-pair findings when topology is known.
+			if len(meta.Topology.ValidatorToSentries) > 0 {
+				for _, val := range isolatedValidators {
+					pairedSentries, ok := meta.Topology.ValidatorToSentries[val.Name]
+					if !ok {
+						continue
+					}
+					for _, sentryName := range pairedSentries {
+						sentrySummary, found := nodeSummaries[sentryName]
+						if !found || sentrySummary.MaxPeers == 0 {
+							continue
+						}
+						findings = append(findings, model.Finding{
+							ID:         "validator-isolated-from-sentry-" + val.Name + "-" + sentryName,
+							Title:      fmt.Sprintf("Validator %s lost connection to its sentry %s", val.Name, sentryName),
+							Severity:   model.SeverityHigh,
+							Confidence: model.ConfidenceHigh,
+							Scope:      val.Name,
+							Summary: fmt.Sprintf(
+								"%s dropped to zero peers while its paired sentry %s remained reachable (max_peers=%d).",
+								val.Name, sentryName, sentrySummary.MaxPeers,
+							),
+							Evidence: []model.Evidence{
+								{Node: val.Name, Message: "validator: 0 current peers"},
+								{Node: sentryName, Message: fmt.Sprintf("sentry: max_peers=%d during window", sentrySummary.MaxPeers)},
+							},
+							PossibleCauses: []string{
+								"private peer connection between sentry and validator broke and was not re-established",
+								"validator's persistent_peers does not include the sentry",
+							},
+							SuggestedActions: []string{
+								"verify persistent_peers on the validator includes the sentry node ID",
+								"verify private_peer_ids on the sentry includes the validator node ID",
+							},
+						})
+					}
+				}
+			} else {
+				// Coarse (no topology metadata): one global finding.
+				ev := make([]model.Evidence, 0, len(isolatedValidators)+len(reachableSentries))
+				for _, v := range isolatedValidators {
+					ev = append(ev, model.Evidence{Node: v.Name, Message: "validator: 0 current peers"})
+				}
+				for _, s := range reachableSentries {
+					ev = append(ev, model.Evidence{Node: s.Name, Message: fmt.Sprintf("sentry: max_peers=%d during window", s.MaxPeers)})
+				}
+				findings = append(findings, model.Finding{
+					ID:         "validator-isolated-despite-sentry",
+					Title:      "Validator isolated despite reachable sentry",
+					Severity:   model.SeverityHigh,
+					Confidence: model.ConfidenceMedium,
+					Scope:      "global",
+					Summary: fmt.Sprintf(
+						"%d validator(s) dropped to zero peers while %d sentry node(s) remained reachable.",
+						len(isolatedValidators), len(reachableSentries),
+					),
+					Evidence: ev,
+					PossibleCauses: []string{
+						"sentry-validator private peer connection misconfigured or dropped",
+						"validator's persistent_peers does not list the sentry node ID",
+					},
+					SuggestedActions: []string{
+						"verify private_peer_ids on the validator matches the sentry node ID",
+						"verify persistent_peers on the sentry includes the validator",
+						"provide topology metadata (--metadata) to get per-pair findings",
+					},
+				})
+			}
+		}
+	}
+
+	// ── Low max_outbound_peers resilience ────────────────────────────────────
+	for _, node := range nodes {
+		if node.MaxOutboundPeersHit > 0 && node.MaxPeers <= 2 {
+			findings = append(findings, model.Finding{
+				ID:         "max-outbound-peers-low-" + node.Name,
+				Title:      fmt.Sprintf("Low max_outbound_peers on %s increases connectivity risk", node.Name),
+				Severity:   model.SeverityMedium,
+				Confidence: model.ConfidenceMedium,
+				Scope:      node.Name,
+				Summary: fmt.Sprintf(
+					"Node hit its outbound peer cap %d time(s) with a ceiling of %d. "+
+						"A single peer loss leaves the node under-connected.",
+					node.MaxOutboundPeersHit, node.MaxPeers,
+				),
+				PossibleCauses: []string{
+					"max_num_outbound_peers set too low in config.toml",
+				},
+				SuggestedActions: []string{
+					"increase max_num_outbound_peers in config.toml (recommended: >= 5 for sentries, >= 2 for validators with sentries)",
+				},
+			})
+		}
+	}
+
+	// ── Proposer analysis ────────────────────────────────────────────────────
+	// Find the apparent incident height: the height with the most prevote-nil events.
+	// If no proposal was signed there by any node, the proposer was absent or unable to sign.
+	{
+		heightFreq := map[int64]int{}
+		for _, ev := range events {
+			if ev.Kind == model.EventPrevoteProposalNil && ev.Height > 0 {
+				heightFreq[ev.Height]++
+			}
+		}
+		incidentH := int64(0)
+		maxFreq := 0
+		for h, freq := range heightFreq {
+			if freq > maxFreq || (freq == maxFreq && h > incidentH) {
+				maxFreq = freq
+				incidentH = h
+			}
+		}
+		if incidentH > 0 && maxFreq >= 2 {
+			// Collect nodes that signed a proposal at the incident height.
+			proposerNodes := []string{}
+			seen := map[string]bool{}
+			for _, ev := range events {
+				if ev.Kind == model.EventSignedProposal && ev.Height == incidentH && !seen[ev.Node] {
+					proposerNodes = append(proposerNodes, ev.Node)
+					seen[ev.Node] = true
+				}
+			}
+			sort.Strings(proposerNodes)
+
+			// Collect nodes that received the complete proposal block at the incident height.
+			receiverNodes := []string{}
+			seen = map[string]bool{}
+			for _, ev := range events {
+				if ev.Kind == model.EventReceivedCompletePart && ev.Height == incidentH && !seen[ev.Node] {
+					receiverNodes = append(receiverNodes, ev.Node)
+					seen[ev.Node] = true
+				}
+			}
+
+			// Build evidence from nil-prevote nodes.
+			nilPrevoteEv := []model.Evidence{}
+			for _, ev := range events {
+				if ev.Kind == model.EventPrevoteProposalNil && ev.Height == incidentH && len(nilPrevoteEv) < 3 {
+					nilPrevoteEv = append(nilPrevoteEv, model.Evidence{
+						Node:      ev.Node,
+						Timestamp: formatMaybeTime(ev.Timestamp),
+						Path:      ev.Path,
+						Line:      ev.Line,
+						Message:   ev.Message,
+					})
+				}
+			}
+
+			if len(proposerNodes) == 0 {
+				// No node signed a proposal — proposer was absent or couldn't sign.
+				findings = append(findings, model.Finding{
+					ID:         fmt.Sprintf("no-proposal-signed-at-h%d", incidentH),
+					Title:      fmt.Sprintf("No proposal was signed at stall height %d", incidentH),
+					Severity:   model.SeverityHigh,
+					Confidence: model.ConfidenceMedium,
+					Scope:      "global",
+					Summary: fmt.Sprintf(
+						"At height %d, %d node(s) prevoted nil because no proposal block was available, "+
+							"and no node in the analyzed set signed a proposal. "+
+							"The proposer for this round was either offline, failed to connect to its remote signer, or not included in the provided logs.",
+						incidentH, maxFreq,
+					),
+					Evidence: nilPrevoteEv,
+					PossibleCauses: []string{
+						"the proposer validator was offline or crashed before sending the proposal",
+						"remote signer failure prevented the proposer from signing",
+						"the proposer's logs are not included in the analyzed set",
+					},
+					SuggestedActions: []string{
+						fmt.Sprintf("provide logs from all validators covering height %d to identify the proposer", incidentH),
+						"check remote signer logs on the proposer node for signing failures",
+					},
+				})
+			} else if len(receiverNodes) == 0 {
+				// Proposal was signed but no node received the complete block.
+				ev := append(nilPrevoteEv, model.Evidence{
+					Node:    proposerNodes[0],
+					Message: fmt.Sprintf("signed a proposal at height %d", incidentH),
+				})
+				findings = append(findings, model.Finding{
+					ID:         fmt.Sprintf("proposal-not-propagated-h%d", incidentH),
+					Title:      fmt.Sprintf("Proposal signed at height %d was not received by peers", incidentH),
+					Severity:   model.SeverityHigh,
+					Confidence: model.ConfidenceMedium,
+					Scope:      "global",
+					Summary: fmt.Sprintf(
+						"%s signed a proposal at height %d, but no other node in the analyzed set received "+
+							"the complete proposal block. Block part propagation failed.",
+						strings.Join(proposerNodes, ", "), incidentH,
+					),
+					Evidence: ev,
+					PossibleCauses: []string{
+						"proposer's P2P connections dropped after signing, before block parts were broadcast",
+						"block part messages were dropped or rejected by receiving peers",
+					},
+					SuggestedActions: []string{
+						"check peer connectivity on the proposer node around the signing time",
+						"look for reactor errors or block-part rejection messages on receiving nodes",
+					},
+				})
+			}
+		}
+	}
+
+	// ── Clock-skew detection ─────────────────────────────────────────────────
+	// Compare timestamps of FinalizeCommit events at the same height across nodes.
+	// A large spread is a signal of clock skew, which can cause spurious timeouts.
+	{
+		commitsByHeight := map[int64][]commitPoint{}
+		for _, ev := range events {
+			if ev.Kind == model.EventFinalizeCommit && ev.HasTimestamp && ev.Height > 0 {
+				commitsByHeight[ev.Height] = append(commitsByHeight[ev.Height], commitPoint{ev.Node, ev.Timestamp})
+			}
+		}
+		maxSkew := time.Duration(0)
+		skewH := int64(0)
+		earlyNode, lateNode := "", ""
+		for h, commits := range commitsByHeight {
+			if len(commits) < 2 {
+				continue
+			}
+			minTs, maxTs := commits[0].ts, commits[0].ts
+			minNode, maxNode := commits[0].node, commits[0].node
+			for _, c := range commits[1:] {
+				if c.ts.Before(minTs) {
+					minTs = c.ts
+					minNode = c.node
+				}
+				if c.ts.After(maxTs) {
+					maxTs = c.ts
+					maxNode = c.node
+				}
+			}
+			if skew := maxTs.Sub(minTs); skew > maxSkew {
+				maxSkew = skew
+				skewH = h
+				earlyNode = minNode
+				lateNode = maxNode
+			}
+		}
+		const skewThreshold = 5 * time.Second
+		if maxSkew >= skewThreshold && skewH > 0 {
+			findings = append(findings, model.Finding{
+				ID:         fmt.Sprintf("clock-skew-%s-%s", earlyNode, lateNode),
+				Title:      fmt.Sprintf("Clock skew of %s detected between %s and %s", formatDuration(maxSkew), earlyNode, lateNode),
+				Severity:   model.SeverityMedium,
+				Confidence: model.ConfidenceLow,
+				Scope:      "global",
+				Summary: fmt.Sprintf(
+					"At height %d, %s committed %s before %s. "+
+						"A skew this large can cause spurious consensus timeouts and vote rejection.",
+					skewH, earlyNode, formatDuration(maxSkew), lateNode,
+				),
+				Evidence: []model.Evidence{
+					{Node: earlyNode, Message: fmt.Sprintf("committed h%d at %s", skewH, minCommitTime(commitsByHeight[skewH]))},
+					{Node: lateNode, Message: fmt.Sprintf("committed h%d at %s", skewH, maxCommitTime(commitsByHeight[skewH]))},
+				},
+				PossibleCauses: []string{
+					"system clock not synchronized (NTP misconfigured or unreachable)",
+					"different time zones configured on host systems",
+				},
+				SuggestedActions: []string{
+					"verify NTP is running and synchronized on all validator and sentry hosts",
+					"check `timedatectl status` or `chronyc tracking` on each host",
 				},
 			})
 		}
@@ -839,11 +1342,55 @@ func allFindingsLowConfidence(findings []model.Finding) bool {
 	return true
 }
 
+type commitPoint struct {
+	node string
+	ts   time.Time
+}
+
+func minCommitTime(commits []commitPoint) string {
+	if len(commits) == 0 {
+		return ""
+	}
+	min := commits[0].ts
+	for _, c := range commits[1:] {
+		if c.ts.Before(min) {
+			min = c.ts
+		}
+	}
+	return min.UTC().Format(time.RFC3339)
+}
+
+func maxCommitTime(commits []commitPoint) string {
+	if len(commits) == 0 {
+		return ""
+	}
+	max := commits[0].ts
+	for _, c := range commits[1:] {
+		if c.ts.After(max) {
+			max = c.ts
+		}
+	}
+	return max.UTC().Format(time.RFC3339)
+}
+
 func formatMaybeTime(ts time.Time) string {
 	if ts.IsZero() {
 		return ""
 	}
 	return ts.UTC().Format(time.RFC3339)
+}
+
+func formatDuration(d time.Duration) string {
+	if d <= 0 {
+		return "0s"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.0fs", d.Seconds())
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
 }
 
 // updateLastConsensusState updates a node's last known consensus position from

@@ -3,6 +3,7 @@ package render
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/gnolang/gno/contribs/gnodoctor/internal/model"
 	"github.com/gnolang/gno/tm2/pkg/colors"
@@ -92,7 +93,8 @@ func Text(report model.Report, opts TextOptions) string {
 		// just creates confusion about missing findings.
 		showTimeouts := node.TimeoutCount > 0 && opts.Verbose
 		hasPeers := node.MaxPeers > 0
-		if !showTimeouts && !hasPeers {
+		hasSigner := node.SignerFailureCount > 0
+		if !showTimeouts && !hasPeers && !hasSigner {
 			continue
 		}
 		if opts.MaxHealth > 0 && !opts.Verbose && shown >= opts.MaxHealth {
@@ -127,7 +129,21 @@ func Text(report model.Report, opts TextOptions) string {
 			}
 		}
 		if hasPeers {
-			fmt.Fprintf(&b, "- %s peer count max=%d current=%d\n", node.Name, node.MaxPeers, node.CurrentPeers)
+			stall := ""
+			if node.StallDuration > 0 {
+				stall = c.red(fmt.Sprintf(" stalled %s", formatDuration(node.StallDuration)))
+			}
+			fmt.Fprintf(&b, "- %s peer count max=%d current=%d%s\n", node.Name, node.MaxPeers, node.CurrentPeers, stall)
+		}
+		if hasSigner {
+			if node.SignerConnectCount > 0 {
+				fmt.Fprintf(&b, "- %s %s failures=%d reconnects=%d\n",
+					node.Name, c.red("remote signer unstable:"),
+					node.SignerFailureCount, node.SignerConnectCount)
+			} else {
+				fmt.Fprintf(&b, "- %s %s\n",
+					node.Name, c.red(fmt.Sprintf("remote signer: %d failure(s), no reconnect observed", node.SignerFailureCount)))
+			}
 		}
 	}
 
@@ -193,6 +209,13 @@ func Text(report model.Report, opts TextOptions) string {
 					node.PrecommitsReceived, node.PrecommitsTotal, precomMaj,
 				)
 			}
+			if node.MaxRoundSeen >= 3 {
+				fmt.Fprintf(&b, "  %s max_round=%d at h%d\n",
+					c.yellow("round escalation:"), node.MaxRoundSeen, node.MaxRoundHeight)
+			}
+			if node.ProposalSignedCount > 0 {
+				fmt.Fprintf(&b, "  proposals signed: %d\n", node.ProposalSignedCount)
+			}
 		}
 	}
 
@@ -249,4 +272,17 @@ func emptyDash(value string) string {
 		return "-"
 	}
 	return value
+}
+
+func formatDuration(d time.Duration) string {
+	if d <= 0 {
+		return "0s"
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.0fs", d.Seconds())
+	}
+	if d < time.Hour {
+		return fmt.Sprintf("%dm%02ds", int(d.Minutes()), int(d.Seconds())%60)
+	}
+	return fmt.Sprintf("%dh%02dm", int(d.Hours()), int(d.Minutes())%60)
 }
