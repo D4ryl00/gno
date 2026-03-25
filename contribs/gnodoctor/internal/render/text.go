@@ -64,6 +64,12 @@ func Text(report model.Report, verbose bool, maxFindings int) string {
 				fmt.Fprintf(&b, "  evidence: %s\n", evidence.Message)
 			}
 		}
+		for _, cause := range finding.PossibleCauses {
+			fmt.Fprintf(&b, "  possible cause: %s\n", cause)
+		}
+		for _, action := range finding.SuggestedActions {
+			fmt.Fprintf(&b, "  suggested: %s\n", action)
+		}
 	}
 
 	if verbose && len(report.Warnings) > 0 {

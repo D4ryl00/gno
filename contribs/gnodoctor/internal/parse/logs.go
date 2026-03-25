@@ -216,36 +216,63 @@ func classifyMessage(msg string) model.EventKind {
 	switch {
 	case msg == "":
 		return model.EventUnknown
+
+	// Startup / configuration
 	case strings.Contains(msg, "unable to update config field"):
 		return model.EventConfigError
+
+	// Fast-sync
+	case strings.Contains(msg, "SwitchToConsensus"):
+		return model.EventSwitchToConsensus
+	case strings.Contains(msg, "BlockchainReactor validation error"):
+		return model.EventFastSyncBlockError
+
+	// P2P
 	case strings.Contains(msg, "Added peer"):
 		return model.EventAddedPeer
 	case strings.Contains(msg, "Stopping peer for error"):
 		return model.EventStoppedPeer
 	case strings.Contains(msg, "unable to dial peer"):
 		return model.EventDialFailure
-	case strings.Contains(msg, "Timed out"):
-		return model.EventTimeout
+	case strings.Contains(msg, "ignoring dial request: already have max outbound peers"):
+		return model.EventMaxOutboundPeers
+	case strings.Contains(msg, "no peers to share in discovery request"):
+		return model.EventNoPeersToShare
+
+	// Consensus — check specific sub-messages before generic ones
+	case strings.Contains(msg, "CONSENSUS FAILURE!!!"):
+		return model.EventConsensusFailure
+	case strings.Contains(msg, "Found conflicting vote from ourselves"):
+		return model.EventConflictingVote
+	case strings.Contains(msg, "Error on ApplyBlock"):
+		return model.EventApplyBlockError
 	case strings.Contains(msg, "enterPrevote: ProposalBlock is nil"):
 		return model.EventPrevoteProposalNil
 	case strings.Contains(msg, "enterPrecommit: No +2/3 prevotes during enterPrecommit"):
 		return model.EventPrecommitNoMaj23
+	case strings.Contains(msg, "Attempt to finalize failed. There was no +2/3 majority"):
+		return model.EventFinalizeNoMaj23
 	case strings.Contains(msg, "Attempt to finalize failed. We don't have the commit block."):
 		return model.EventCommitBlockMissing
 	case strings.Contains(msg, "Finalizing commit of block"):
 		return model.EventFinalizeCommit
-	case strings.Contains(msg, "CONSENSUS FAILURE!!!"):
-		return model.EventConsensusFailure
-	case strings.Contains(msg, "This node is not a validator"):
-		return model.EventNodeNotValidator
+	case strings.Contains(msg, "Timed out"):
+		return model.EventTimeout
+	case strings.Contains(msg, "Received complete proposal block"):
+		return model.EventReceivedCompletePart
 	case strings.Contains(msg, "Signed proposal"):
 		return model.EventSignedProposal
+
+	// Validator identity
+	case strings.Contains(msg, "This node is not a validator"):
+		return model.EventNodeNotValidator
+
+	// Remote signer
 	case strings.Contains(msg, "Sign request failed"):
 		return model.EventRemoteSignerFailure
 	case strings.Contains(msg, "Connected to server"):
 		return model.EventRemoteSignerConnect
-	case strings.Contains(msg, "Received complete proposal block"):
-		return model.EventReceivedCompletePart
+
 	default:
 		return model.EventUnknown
 	}

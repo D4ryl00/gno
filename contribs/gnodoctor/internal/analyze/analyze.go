@@ -3,7 +3,6 @@ package analyze
 import (
 	"fmt"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/gnolang/gno/contribs/gnodoctor/internal/model"
@@ -47,7 +46,15 @@ func BuildReport(input Input) model.Report {
 		}
 	}
 
-	report.ConfidenceTooLow = len(findings) == 0 || allFindingsLowConfidence(findings)
+	// ConfidenceTooLow: not enough classifiable events to draw conclusions.
+	// Zero findings from good logs is a clean result (exit 0), not low confidence.
+	totalClassified := 0
+	for _, ev := range input.Events {
+		if ev.Kind != model.EventUnknown && ev.Kind != model.EventParserWarning {
+			totalClassified++
+		}
+	}
+	report.ConfidenceTooLow = totalClassified == 0
 
 	return report
 }
@@ -121,6 +128,17 @@ func buildNodeSummaries(sources []model.Source, events []model.Event) []model.No
 func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []model.Event, warnings []string) []model.Finding {
 	findings := make([]model.Finding, 0)
 
+	if genesis.ValidatorNum == 0 {
+		findings = append(findings, model.Finding{
+			ID:         "genesis-no-validators",
+			Title:      "Genesis has no validators",
+			Severity:   model.SeverityCritical,
+			Confidence: model.ConfidenceHigh,
+			Scope:      "global",
+			Summary:    "The genesis file contains an empty validator set; the chain cannot produce blocks.",
+		})
+	}
+
 	if len(warnings) > 0 {
 		findings = append(findings, model.Finding{
 			ID:         "parser-warnings",
@@ -168,6 +186,10 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 					"persistent peer misconfiguration",
 					"network partition",
 				},
+				SuggestedActions: []string{
+					"check persistent_peers in config.toml",
+					"verify network connectivity to peer addresses",
+				},
 			})
 		}
 	}
@@ -183,24 +205,132 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 		})
 	}
 
+	nodeRoles := make(map[string]model.Role, len(nodes))
+	for _, n := range nodes {
+		nodeRoles[n.Name] = n.Role
+	}
+
 	grouped := groupEventsByNode(events)
 	for node, nodeEvents := range grouped {
-		if count := countByKind(nodeEvents, model.EventCommitBlockMissing); count > 0 {
+		// Config errors — emitted before the first structured log line.
+		if count := countByKind(nodeEvents, model.EventConfigError); count > 0 {
 			findings = append(findings, model.Finding{
-				ID:         "missing-commit-block-" + node,
-				Title:      fmt.Sprintf("%s failed to finalize because the commit block was missing locally", node),
+				ID:         "config-error-" + node,
+				Title:      fmt.Sprintf("Configuration error on %s", node),
+				Severity:   model.SeverityMedium,
+				Confidence: model.ConfidenceHigh,
+				Scope:      node,
+				Summary:    fmt.Sprintf("%d unrecognized or invalid configuration field(s) detected at startup.", count),
+				Evidence:   firstEvidence(nodeEvents, model.EventConfigError, 3),
+				SuggestedActions: []string{
+					"check config.toml for typos in field names",
+					"compare against the reference config from `gnoland config init`",
+				},
+			})
+		}
+
+		// Consensus panic — node crashed; always critical.
+		if count := countByKind(nodeEvents, model.EventConsensusFailure); count > 0 {
+			ev := firstEvidence(nodeEvents, model.EventConsensusFailure, 1)
+			// Attach the stack trace from the Fields if available.
+			if len(ev) > 0 {
+				for _, e := range nodeEvents {
+					if e.Kind == model.EventConsensusFailure {
+						if stack, ok := e.Fields["stack"].(string); ok && stack != "" {
+							ev[0].Message = ev[0].Message + "\n  stack: " + stack
+						}
+						break
+					}
+				}
+			}
+			findings = append(findings, model.Finding{
+				ID:         "consensus-panic-" + node,
+				Title:      fmt.Sprintf("Consensus panic on %s", node),
 				Severity:   model.SeverityCritical,
 				Confidence: model.ConfidenceHigh,
 				Scope:      node,
-				Summary:    "The node reached commit processing but did not have the block required for finalization.",
+				Summary:    "A CONSENSUS FAILURE!!! panic was logged. The node process terminated.",
+				Evidence:   ev,
+				SuggestedActions: []string{
+					"check the panic stack trace for the root cause",
+					"restart the node after resolving the underlying issue",
+					"file a bug report if the panic message is `not yet implemented`",
+				},
+			})
+		}
+
+		// Conflicting vote from self — possible double-signing or unsafe reset.
+		if count := countByKind(nodeEvents, model.EventConflictingVote); count > 0 {
+			findings = append(findings, model.Finding{
+				ID:         "conflicting-vote-" + node,
+				Title:      fmt.Sprintf("Conflicting vote from self on %s", node),
+				Severity:   model.SeverityCritical,
+				Confidence: model.ConfidenceHigh,
+				Scope:      node,
+				Summary:    "The node detected a conflicting vote originating from its own key.",
+				Evidence:   firstEvidence(nodeEvents, model.EventConflictingVote, 2),
+				PossibleCauses: []string{
+					"unsafe_reset_all was run on a live validator without resetting the KMS",
+					"the same private key is used on more than one validator simultaneously",
+				},
+				SuggestedActions: []string{
+					"immediately stop all nodes sharing this key",
+					"investigate whether a double-sign slashing event occurred",
+				},
+			})
+		}
+
+		// ApplyBlock error — application-level crash.
+		if count := countByKind(nodeEvents, model.EventApplyBlockError); count > 0 {
+			findings = append(findings, model.Finding{
+				ID:         "apply-block-error-" + node,
+				Title:      fmt.Sprintf("ApplyBlock error on %s", node),
+				Severity:   model.SeverityCritical,
+				Confidence: model.ConfidenceHigh,
+				Scope:      node,
+				Summary:    "The application returned an error when applying a block. The node may need a restart or a rollback.",
+				Evidence:   firstEvidence(nodeEvents, model.EventApplyBlockError, 2),
+				SuggestedActions: []string{
+					"check the error field in the log line for the root cause",
+					"consider running `gnoland unsafe_reset_all` and re-syncing if the data is corrupted",
+				},
+			})
+		}
+
+		// CommitBlockMissing — the node reached commit phase but lacks the block.
+		// This appears transiently during catch-up; only flag when it recurs (>= 3).
+		if count := countByKind(nodeEvents, model.EventCommitBlockMissing); count >= 3 {
+			findings = append(findings, model.Finding{
+				ID:         "missing-commit-block-" + node,
+				Title:      fmt.Sprintf("%s repeatedly failed to finalize because the commit block was missing locally", node),
+				Severity:   model.SeverityHigh,
+				Confidence: model.ConfidenceHigh,
+				Scope:      node,
+				Summary:    fmt.Sprintf("Seen %d times. The node reached commit processing but did not have the block required for finalization.", count),
 				Evidence:   firstEvidence(nodeEvents, model.EventCommitBlockMissing, 3),
 				PossibleCauses: []string{
-					"proposal block parts were not fully received",
-					"reactor propagation failure",
+					"proposal block parts were not fully received before commit",
+					"reactor propagation failure between sentry and validator",
 				},
 				SuggestedActions: []string{
 					"inspect reactor and peer logs around the same height",
 					"compare with sentry logs for missing block-part propagation",
+				},
+			})
+		}
+
+		if count := countByKind(nodeEvents, model.EventFinalizeNoMaj23); count >= 3 {
+			findings = append(findings, model.Finding{
+				ID:         "finalize-no-maj23-" + node,
+				Title:      fmt.Sprintf("%s failed to finalize because +2/3 majority was absent", node),
+				Severity:   model.SeverityHigh,
+				Confidence: model.ConfidenceHigh,
+				Scope:      node,
+				Summary:    fmt.Sprintf("Seen %d times. Finalization was attempted but quorum was not reached.", count),
+				Evidence:   firstEvidence(nodeEvents, model.EventFinalizeNoMaj23, 3),
+				PossibleCauses: []string{
+					"quorum failure: not enough validators online",
+					"network partition isolating a majority of validators",
 				},
 			})
 		}
@@ -212,7 +342,7 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 				Severity:   model.SeverityHigh,
 				Confidence: model.ConfidenceHigh,
 				Scope:      node,
-				Summary:    "Repeated nil prevotes indicate missing or incomplete proposal block reception.",
+				Summary:    fmt.Sprintf("Seen %d times. Repeated nil prevotes indicate missing or incomplete proposal block reception.", count),
 				Evidence:   firstEvidence(nodeEvents, model.EventPrevoteProposalNil, 3),
 				PossibleCauses: []string{
 					"proposal propagation failure",
@@ -228,7 +358,7 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 				Severity:   model.SeverityHigh,
 				Confidence: model.ConfidenceHigh,
 				Scope:      node,
-				Summary:    "Consensus rounds advanced without enough prevotes to lock or commit a block.",
+				Summary:    fmt.Sprintf("Seen %d times. Consensus rounds advanced without enough prevotes to lock or commit a block.", count),
 				Evidence:   firstEvidence(nodeEvents, model.EventPrecommitNoMaj23, 3),
 				PossibleCauses: []string{
 					"quorum failure",
@@ -238,27 +368,42 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 			})
 		}
 
-		if count := countByKind(nodeEvents, model.EventConsensusFailure); count > 0 {
-			findings = append(findings, model.Finding{
-				ID:         "consensus-panic-" + node,
-				Title:      fmt.Sprintf("Consensus panic on %s", node),
-				Severity:   model.SeverityCritical,
-				Confidence: model.ConfidenceHigh,
-				Scope:      node,
-				Summary:    "A consensus failure panic was logged.",
-				Evidence:   firstEvidence(nodeEvents, model.EventConsensusFailure, 1),
-			})
+		// Only flag "not a validator" for nodes declared as validators.
+		// Sentry nodes legitimately emit this message; it is expected.
+		if nodeRoles[node] == model.RoleValidator {
+			if count := countByKind(nodeEvents, model.EventNodeNotValidator); count > 0 {
+				findings = append(findings, model.Finding{
+					ID:         "node-not-validator-" + node,
+					Title:      fmt.Sprintf("%s reported that it is not a validator", node),
+					Severity:   model.SeverityMedium,
+					Confidence: model.ConfidenceHigh,
+					Scope:      node,
+					Summary:    "This log source was supplied as a validator but the node key is not in the genesis validator set.",
+					Evidence:   firstEvidence(nodeEvents, model.EventNodeNotValidator, 2),
+					PossibleCauses: []string{
+						"wrong key configured; node key is not in the genesis validator set",
+						"log file belongs to a sentry node and was supplied via --validator-log by mistake",
+					},
+				})
+			}
 		}
 
-		if count := countByKind(nodeEvents, model.EventNodeNotValidator); count > 0 {
+		if count := countByKind(nodeEvents, model.EventFastSyncBlockError); count > 0 {
 			findings = append(findings, model.Finding{
-				ID:         "node-not-validator-" + node,
-				Title:      fmt.Sprintf("%s reported that it is not a validator", node),
+				ID:         "fastsync-block-error-" + node,
+				Title:      fmt.Sprintf("Fast-sync block validation errors on %s", node),
 				Severity:   model.SeverityMedium,
 				Confidence: model.ConfidenceHigh,
 				Scope:      node,
-				Summary:    "This log source may not correspond to an active validator.",
-				Evidence:   firstEvidence(nodeEvents, model.EventNodeNotValidator, 2),
+				Summary:    fmt.Sprintf("%d peer(s) were dropped for providing a block that did not match the expected commit during fast-sync.", count),
+				Evidence:   firstEvidence(nodeEvents, model.EventFastSyncBlockError, 3),
+				PossibleCauses: []string{
+					"node has divergent local state relative to the network",
+					"possible chain fork affecting a subset of peers",
+				},
+				SuggestedActions: []string{
+					"run `gnoland unsafe_reset_all` and re-sync from a trusted peer",
+				},
 			})
 		}
 
@@ -269,8 +414,15 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 				Severity:   model.SeverityHigh,
 				Confidence: model.ConfidenceMedium,
 				Scope:      node,
-				Summary:    "Signing requests failed in the observed window.",
+				Summary:    fmt.Sprintf("%d signing request failure(s) observed.", count),
 				Evidence:   firstEvidence(nodeEvents, model.EventRemoteSignerFailure, 2),
+				PossibleCauses: []string{
+					"KMS process not running or not reachable on the configured socket",
+					"key not loaded in the KMS",
+				},
+				SuggestedActions: []string{
+					"verify the KMS process is running and the socket path matches config",
+				},
 			})
 		}
 	}
@@ -368,14 +520,8 @@ func severityRank(severity model.Severity) int {
 }
 
 func allFindingsLowConfidence(findings []model.Finding) bool {
-	if len(findings) == 0 {
-		return true
-	}
 	for _, finding := range findings {
 		if finding.Confidence != model.ConfidenceLow {
-			return false
-		}
-		if !strings.Contains(strings.ToLower(finding.Summary), "partially") {
 			return false
 		}
 	}
