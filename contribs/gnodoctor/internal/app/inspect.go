@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/gnolang/gno/contribs/gnodoctor/internal/analyze"
 	"github.com/gnolang/gno/contribs/gnodoctor/internal/model"
 	"github.com/gnolang/gno/contribs/gnodoctor/internal/parse"
@@ -204,6 +206,9 @@ func execInspect(_ context.Context, cfg *inspectCfg, io commands.IO) error {
 		}
 	}
 
+	// Enable colors only when stdout is a real terminal and NO_COLOR is unset.
+	colorOutput := term.IsTerminal(int(os.Stdout.Fd())) && os.Getenv("NO_COLOR") == ""
+
 	switch cfg.outputFormat {
 	case "text":
 		io.Printf("%s", render.Text(report, render.TextOptions{
@@ -211,6 +216,7 @@ func execInspect(_ context.Context, cfg *inspectCfg, io commands.IO) error {
 			ShowUnclassified: cfg.showUnclassified,
 			MaxFindings:      cfg.maxFindings,
 			MaxHealth:        cfg.maxHealth,
+			Color:            colorOutput,
 		}))
 	case "json":
 		payload, jsonErr := render.JSON(report)

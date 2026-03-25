@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/gnolang/gno/contribs/gnodoctor/internal/model"
+	"github.com/gnolang/gno/tm2/pkg/colors"
 )
 
 // TextOptions controls the text renderer behaviour.
@@ -13,20 +14,61 @@ type TextOptions struct {
 	ShowUnclassified bool // show parser warnings for unclassified log lines
 	MaxFindings      int  // 0 = unlimited
 	MaxHealth        int  // max node sections in health summary (0 = unlimited)
+	Color            bool // emit ANSI color codes (auto-detected from TTY)
+}
+
+// colorizer wraps ANSI helpers; a no-op when Color is false.
+type colorizer struct{ enabled bool }
+
+func (c colorizer) apply(code, s string) string {
+	if !c.enabled || s == "" {
+		return s
+	}
+	return code + s + colors.ANSIReset
+}
+
+func (c colorizer) bold(s string) string   { return c.apply(colors.ANSIBright, s) }
+func (c colorizer) dim(s string) string    { return c.apply(colors.ANSIDim, s) }
+func (c colorizer) red(s string) string    { return c.apply(colors.ANSIFgRed, s) }
+func (c colorizer) yellow(s string) string { return c.apply(colors.ANSIFgYellow, s) }
+func (c colorizer) green(s string) string  { return c.apply(colors.ANSIFgGreen, s) }
+func (c colorizer) cyan(s string) string   { return c.apply(colors.ANSIFgCyan, s) }
+func (c colorizer) gray(s string) string   { return c.apply(colors.ANSIFgGray, s) }
+
+func (c colorizer) severity(sev model.Severity) string {
+	badge := "[" + string(sev) + "]"
+	if !c.enabled {
+		return badge
+	}
+	switch sev {
+	case model.SeverityCritical:
+		return colors.ANSIBright + colors.ANSIFgRed + badge + colors.ANSIReset
+	case model.SeverityHigh:
+		return colors.ANSIBright + colors.ANSIFgYellow + badge + colors.ANSIReset
+	case model.SeverityMedium:
+		return colors.ANSIFgCyan + badge + colors.ANSIReset
+	case model.SeverityLow:
+		return colors.ANSIFgGray + badge + colors.ANSIReset
+	default: // info
+		return colors.ANSIFgGray + badge + colors.ANSIReset
+	}
 }
 
 func Text(report model.Report, opts TextOptions) string {
 	var b strings.Builder
+	c := colorizer{opts.Color}
 
+	// ── Header ──────────────────────────────────────────────────────────────
 	fmt.Fprintf(&b, "Chain: %s\n", report.Input.ChainID)
 	fmt.Fprintf(&b, "Genesis validators: %d\n", report.Input.ValidatorCount)
 	fmt.Fprintf(&b, "Logs analyzed: %d files, %d nodes", report.Input.LogFileCount, report.Input.NodeCount)
 	if report.Input.TimeWindowStart != "" || report.Input.TimeWindowEnd != "" {
 		fmt.Fprintf(&b, ", window %s -> %s", emptyDash(report.Input.TimeWindowStart), emptyDash(report.Input.TimeWindowEnd))
 	}
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
-	b.WriteString("Health summary\n")
+	// ── Health summary ───────────────────────────────────────────────────────
+	b.WriteString("\n" + c.bold("Health summary") + "\n")
 	maxCommit := int64(0)
 	for _, node := range report.Nodes {
 		if node.HighestCommit > maxCommit {
@@ -34,9 +76,9 @@ func Text(report model.Report, opts TextOptions) string {
 		}
 	}
 	if maxCommit > 0 {
-		fmt.Fprintf(&b, "- Forward progress observed until height %d\n", maxCommit)
+		fmt.Fprintf(&b, "%s\n", c.green(fmt.Sprintf("- Forward progress observed until height %d", maxCommit)))
 	} else {
-		b.WriteString("- No finalized commit observed in the analyzed window\n")
+		fmt.Fprintf(&b, "%s\n", c.red("- No finalized commit observed in the analyzed window"))
 	}
 	if report.MetadataGeneratedPath != "" {
 		fmt.Fprintf(&b, "- Metadata template written to %s\n", report.MetadataGeneratedPath)
@@ -60,7 +102,7 @@ func Text(report model.Report, opts TextOptions) string {
 					remaining++
 				}
 			}
-			fmt.Fprintf(&b, "- ... %d more node(s) omitted; use --verbose to see all\n", remaining)
+			fmt.Fprintf(&b, "%s\n", c.dim(fmt.Sprintf("- ... %d more node(s) omitted; use --verbose to see all", remaining)))
 			break
 		}
 		shown++
@@ -80,7 +122,7 @@ func Text(report model.Report, opts TextOptions) string {
 					}
 				}
 				if node.TimeoutCount > len(node.TimeoutSamples) {
-					fmt.Fprintf(&b, "  ... %d more\n", node.TimeoutCount-len(node.TimeoutSamples))
+					fmt.Fprintf(&b, "  %s\n", c.dim(fmt.Sprintf("... %d more", node.TimeoutCount-len(node.TimeoutSamples))))
 				}
 			}
 		}
@@ -89,7 +131,7 @@ func Text(report model.Report, opts TextOptions) string {
 		}
 	}
 
-	// Consensus state section — only when at least one node has position data.
+	// ── Consensus state ──────────────────────────────────────────────────────
 	anyConsensusState := false
 	for _, node := range report.Nodes {
 		if node.LastHeight > 0 {
@@ -98,7 +140,6 @@ func Text(report model.Report, opts TextOptions) string {
 		}
 	}
 	if anyConsensusState {
-		// Find the max height across all nodes for divergence annotation.
 		maxLastHeight := int64(0)
 		for _, node := range report.Nodes {
 			if node.LastHeight > maxLastHeight {
@@ -106,46 +147,46 @@ func Text(report model.Report, opts TextOptions) string {
 			}
 		}
 
-		b.WriteString("\nConsensus state (end of window)\n")
+		b.WriteString("\n" + c.bold("Consensus state (end of window)") + "\n")
 		for _, node := range report.Nodes {
 			if node.LastHeight == 0 {
 				if node.Role == model.RoleValidator {
-					fmt.Fprintf(&b, "- %s [%s] no consensus events observed\n", node.Name, node.Role)
+					fmt.Fprintf(&b, "- %s [%s] no consensus events observed\n", node.Name, c.dim(string(node.Role)))
 				}
 				continue
 			}
 			lag := ""
 			if maxLastHeight > node.LastHeight {
-				lag = fmt.Sprintf(" [!%d behind]", maxLastHeight-node.LastHeight)
+				lag = c.red(fmt.Sprintf(" [!%d behind]", maxLastHeight-node.LastHeight))
 			}
 			step := ""
 			if node.LastStep != "" {
-				step = " step=" + node.LastStep
+				step = " step=" + c.dim(node.LastStep)
 			}
 			ts := ""
 			if !node.LastEventTime.IsZero() {
-				ts = " (last: " + node.LastEventTime.UTC().Format("15:04:05Z") + ")"
+				ts = c.dim(" (last: " + node.LastEventTime.UTC().Format("15:04:05Z") + ")")
 			}
 			fastsync := ""
 			if node.JoinedViaFastSync {
 				if node.FastSyncSwitchHeight > 0 {
-					fastsync = fmt.Sprintf(" [fast-sync@h%d]", node.FastSyncSwitchHeight)
+					fastsync = c.yellow(fmt.Sprintf(" [fast-sync@h%d]", node.FastSyncSwitchHeight))
 				} else {
-					fastsync = " [fast-sync]"
+					fastsync = c.yellow(" [fast-sync]")
 				}
 			}
 			fmt.Fprintf(&b, "- %s [%s] height=%d round=%d%s%s%s%s\n",
-				node.Name, node.Role,
+				node.Name, c.dim(string(node.Role)),
 				node.LastHeight, node.LastRound,
 				step, ts, lag, fastsync,
 			)
 			if node.PrevotesTotal > 0 || node.PrecommitsTotal > 0 {
 				prevMaj, precomMaj := "", ""
 				if node.PrevotesMaj23 {
-					prevMaj = " +2/3"
+					prevMaj = c.green(" +2/3")
 				}
 				if node.PrecommitsMaj23 {
-					precomMaj = " +2/3"
+					precomMaj = c.green(" +2/3")
 				}
 				fmt.Fprintf(&b, "  prevotes: %d/%d%s  precommits: %d/%d%s\n",
 					node.PrevotesReceived, node.PrevotesTotal, prevMaj,
@@ -155,7 +196,8 @@ func Text(report model.Report, opts TextOptions) string {
 		}
 	}
 
-	b.WriteString("\nFindings\n")
+	// ── Findings ─────────────────────────────────────────────────────────────
+	b.WriteString("\n" + c.bold("Findings") + "\n")
 	rendered := 0
 	for _, finding := range report.Findings {
 		if !opts.Verbose && (finding.Severity == model.SeverityInfo || finding.Severity == model.SeverityLow) {
@@ -165,28 +207,35 @@ func Text(report model.Report, opts TextOptions) string {
 		if opts.MaxFindings > 0 && rendered > opts.MaxFindings {
 			break
 		}
-		fmt.Fprintf(&b, "[%s] %s\n", finding.Severity, finding.Title)
+		if rendered > 1 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "%s %s\n", c.severity(finding.Severity), c.bold(finding.Title))
 		fmt.Fprintf(&b, "  %s\n", finding.Summary)
 		for _, evidence := range finding.Evidence {
 			if evidence.Message == "" {
 				continue
 			}
+			prefix := c.gray("evidence:")
 			if evidence.Path != "" {
-				fmt.Fprintf(&b, "  evidence: %s:%d %s\n", evidence.Path, evidence.Line, evidence.Message)
+				fmt.Fprintf(&b, "  %s %s:%d %s\n", prefix, evidence.Path, evidence.Line, evidence.Message)
+			} else if evidence.Node != "" {
+				fmt.Fprintf(&b, "  %s [%s] %s\n", prefix, evidence.Node, evidence.Message)
 			} else {
-				fmt.Fprintf(&b, "  evidence: %s\n", evidence.Message)
+				fmt.Fprintf(&b, "  %s %s\n", prefix, evidence.Message)
 			}
 		}
 		for _, cause := range finding.PossibleCauses {
-			fmt.Fprintf(&b, "  possible cause: %s\n", cause)
+			fmt.Fprintf(&b, "  %s %s\n", c.yellow("possible cause:"), cause)
 		}
 		for _, action := range finding.SuggestedActions {
-			fmt.Fprintf(&b, "  suggested: %s\n", action)
+			fmt.Fprintf(&b, "  %s %s\n", c.cyan("suggested:"), action)
 		}
 	}
 
+	// ── Unclassified log lines ────────────────────────────────────────────────
 	if opts.ShowUnclassified && len(report.Warnings) > 0 {
-		b.WriteString("\nUnclassified log lines\n")
+		b.WriteString("\n" + c.bold("Unclassified log lines") + "\n")
 		for _, warning := range report.Warnings {
 			fmt.Fprintf(&b, "- %s\n", warning)
 		}
