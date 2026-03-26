@@ -211,6 +211,9 @@ type NodeSummary struct {
 
 	// Peer connectivity.
 	DialFailureCount int `json:"dial_failure_count,omitempty"`
+
+	// Log quality.
+	HasDebugLogs bool `json:"has_debug_logs,omitempty"`
 }
 
 type InputSummary struct {

@@ -104,6 +104,9 @@ func buildNodeSummaries(sources []model.Source, events []model.Event) []model.No
 			summaries[event.Node] = summary
 		}
 		summary.EventCount++
+		if event.Level == "debug" {
+			summary.HasDebugLogs = true
+		}
 		if event.HasTimestamp {
 			if summary.Start.IsZero() || event.Timestamp.Before(summary.Start) {
 				summary.Start = event.Timestamp
@@ -398,10 +401,17 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 			panicIdx := -1
 			panicHeight := int64(0)
 			panicPath := ""
+			lastH := int64(0)
 			for i, e := range nodeEvents {
+				if e.Height > 0 {
+					lastH = e.Height
+				}
 				if e.Kind == model.EventConsensusFailure {
 					panicIdx = i
 					panicHeight = e.Height
+					if panicHeight == 0 {
+						panicHeight = lastH
+					}
 					panicPath = e.Path
 					break
 				}
@@ -917,6 +927,210 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 		if node.StallDuration < threshold {
 			continue
 		}
+
+		// Collect events that occurred after the last commit — the stall window.
+		// Primary filter: timestamp-based. Fallback for events that lack a
+		// timestamp (raw lines, stack traces): include them if they appear on a
+		// line number after the last commit event in the same file.
+		lastCommitLineByPath := map[string]int{}
+		for _, ev := range grouped[node.Name] {
+			if ev.Kind == model.EventFinalizeCommit && ev.Height == node.HighestCommit {
+				if ev.Line > lastCommitLineByPath[ev.Path] {
+					lastCommitLineByPath[ev.Path] = ev.Line
+				}
+			}
+		}
+		stallEvents := make([]model.Event, 0)
+		for _, ev := range grouped[node.Name] {
+			if ev.HasTimestamp {
+				if ev.Timestamp.After(node.LastCommitTime) {
+					stallEvents = append(stallEvents, ev)
+				}
+			} else if commitLine, ok := lastCommitLineByPath[ev.Path]; ok && ev.Line > commitLine {
+				stallEvents = append(stallEvents, ev)
+			}
+		}
+
+		// Inspect what actually happened during the stall window.
+		peerIsolated := node.CurrentPeers == 0 && node.MaxPeers > 0
+		hasCrash := countByKind(stallEvents, model.EventConsensusFailure) > 0 ||
+			countByKind(stallEvents, model.EventApplyBlockError) > 0
+		noMaj23Count := countByKind(stallEvents, model.EventFinalizeNoMaj23) +
+			countByKind(stallEvents, model.EventPrecommitNoMaj23)
+		nilPrevoteCount := countByKind(stallEvents, model.EventPrevoteProposalNil)
+		missingBlockCount := countByKind(stallEvents, model.EventCommitBlockMissing)
+		signerUnavailable := node.SignerFailureCount > 0 && node.ProposalSignedCount == 0
+
+		// Cross-node quorum analysis: find other validators that also failed to
+		// commit the next height. A validator is "covering the stall window" if its
+		// log extends past this node's last commit time — that makes its absence of
+		// commits meaningful rather than just a missing-log artefact.
+		nextH := node.HighestCommit + 1
+		type failedPeer struct {
+			name    string
+			reason  string // "crashed" | "stalled"
+			details string
+		}
+		var failedPeers []failedPeer
+		for _, other := range nodes {
+			if other.Name == node.Name {
+				continue
+			}
+			// Skip known non-validators; include validators and unknown-role nodes
+			// (unknown-role nodes may be validators supplied via --log).
+			if other.Role == model.RoleSentry || other.Role == model.RoleSeed {
+				continue
+			}
+			// Other validator also didn't commit nextH and has logs covering the window.
+			coversWindow := !other.LastEventTime.IsZero() && other.LastEventTime.After(node.LastCommitTime)
+			if !coversWindow || other.HighestCommit >= nextH {
+				continue
+			}
+			// Classify how this validator failed.
+			reason := "stalled"
+			details := fmt.Sprintf("last commit at h%d, no commit at h%d", other.HighestCommit, nextH)
+			// Check if this peer actually crashed (has ConsensusFailure near the stall height).
+			// Track the last seen height as we scan so that a panic event without a height
+			// field can be attributed to the most recent consensus position.
+			lastSeenH := int64(0)
+			for _, ev := range grouped[other.Name] {
+				if ev.Height > 0 {
+					lastSeenH = ev.Height
+				}
+				if ev.Kind != model.EventConsensusFailure {
+					continue
+				}
+				if ev.Height == 0 || ev.Height == nextH || ev.Height == node.HighestCommit {
+					reason = "crashed"
+					panicH := ev.Height
+					if panicH == 0 {
+						panicH = lastSeenH
+					}
+					if panicH > 0 {
+						details = fmt.Sprintf("consensus panic at h%d", panicH)
+					} else {
+						details = "consensus panic (height not recorded in log)"
+					}
+					break
+				}
+			}
+			failedPeers = append(failedPeers, failedPeer{other.Name, reason, details})
+		}
+
+		// Build evidence list.
+		var stallEv []model.Evidence
+		if peerIsolated {
+			stallEv = append(stallEv, model.Evidence{
+				Node:    node.Name,
+				Message: fmt.Sprintf("peer count dropped to 0 (max seen during window: %d)", node.MaxPeers),
+			})
+		}
+		if hasCrash {
+			for _, k := range []model.EventKind{model.EventConsensusFailure, model.EventApplyBlockError} {
+				for _, ev := range stallEvents {
+					if ev.Kind == k {
+						stallEv = append(stallEv, model.Evidence{
+							Node:      ev.Node,
+							Timestamp: formatMaybeTime(ev.Timestamp),
+							Path:      ev.Path,
+							Line:      ev.Line,
+							Message:   ev.Message,
+						})
+						break
+					}
+				}
+			}
+		}
+		for _, fp := range failedPeers {
+			stallEv = append(stallEv, model.Evidence{Node: fp.name, Message: fp.details})
+		}
+
+		// Build specific, evidence-driven causes — only list what we can observe.
+		possibleCauses := []string{}
+		if hasCrash {
+			if len(failedPeers) > 0 {
+				// Other validators also failed — crash is part of a broader quorum failure.
+				possibleCauses = append(possibleCauses,
+					"node panic or application crash (see related finding); combined with other validator failures listed below, this likely caused the quorum loss")
+			} else {
+				// No other validator logs available — crash is known but we can't say whether quorum was lost because of it alone.
+				possibleCauses = append(possibleCauses,
+					fmt.Sprintf("node panic or application crash (see related finding) — "+
+						"if other validators also crashed around h%d, their combined failures could explain the quorum loss; obtain their logs to confirm", nextH))
+			}
+		}
+		if peerIsolated {
+			possibleCauses = append(possibleCauses,
+				fmt.Sprintf("peer isolation: all %d P2P connections were lost and not recovered", node.MaxPeers))
+		}
+		if len(failedPeers) > 0 {
+			// Count crashed vs stalled to phrase the cause accurately.
+			crashedNames, stalledNames := []string{}, []string{}
+			for _, fp := range failedPeers {
+				if fp.reason == "crashed" {
+					crashedNames = append(crashedNames, fp.name)
+				} else {
+					stalledNames = append(stalledNames, fp.name)
+				}
+			}
+			parts := []string{}
+			if len(crashedNames) > 0 {
+				parts = append(parts, fmt.Sprintf("%d crashed (%s)", len(crashedNames), strings.Join(crashedNames, ", ")))
+			}
+			if len(stalledNames) > 0 {
+				parts = append(parts, fmt.Sprintf("%d stalled (%s)", len(stalledNames), strings.Join(stalledNames, ", ")))
+			}
+			possibleCauses = append(possibleCauses,
+				fmt.Sprintf("quorum loss caused by other validators also failing at h%d: %s — "+
+					"if their combined voting power exceeds 1/3, consensus cannot proceed",
+					nextH, strings.Join(parts, " and ")))
+		} else if noMaj23Count > 0 {
+			// noMaj23 without identified failed peers — quorum issue without known cause.
+			possibleCauses = append(possibleCauses,
+				fmt.Sprintf("+2/3 voting quorum was not reached %d time(s) — not enough validator votes arrived; logs from other validators are not available to identify which ones failed", noMaj23Count))
+		}
+		if nilPrevoteCount > 0 {
+			possibleCauses = append(possibleCauses,
+				fmt.Sprintf("no proposal block arrived %d time(s) — the proposer may be offline or its block parts were not propagated to this node", nilPrevoteCount))
+		}
+		if missingBlockCount > 0 {
+			possibleCauses = append(possibleCauses,
+				fmt.Sprintf("commit block was not available locally %d time(s) — block-part propagation from peers failed before finalization", missingBlockCount))
+		}
+		if signerUnavailable {
+			possibleCauses = append(possibleCauses,
+				"remote signer was unavailable throughout the stall window — this node could not sign proposals or votes")
+		}
+		if len(possibleCauses) == 0 {
+			// No specific cause detectable from available events.
+			if node.HasDebugLogs {
+				possibleCauses = append(possibleCauses,
+					"cause not determinable from available logs — no consensus failure, quorum error, or peer loss was recorded in the stall window even with debug-level logs present")
+			} else {
+				possibleCauses = append(possibleCauses,
+					"cause not determinable from available logs — no consensus failure, quorum error, or peer loss was recorded in the stall window; enable debug-level logging to get more detail")
+			}
+		}
+
+		// Build suggested actions.
+		suggestedActions := []string{
+			fmt.Sprintf("provide logs from %s onward to confirm whether the node recovered", node.LastCommitTime.UTC().Format(time.RFC3339)),
+		}
+		if peerIsolated {
+			suggestedActions = append(suggestedActions,
+				"check network connectivity and persistent_peers configuration on this node")
+		}
+		if len(failedPeers) > 0 {
+			suggestedActions = append(suggestedActions,
+				fmt.Sprintf("investigate why %d other validator(s) also failed at h%d — fix the root cause on those nodes first", len(failedPeers), nextH))
+		} else if hasCrash {
+			suggestedActions = append(suggestedActions,
+				fmt.Sprintf("obtain logs from other validators covering h%d to check whether they also crashed or stalled simultaneously — if their combined voting power exceeds 1/3, that would explain the quorum loss", nextH))
+		} else if noMaj23Count > 0 || nilPrevoteCount > 0 {
+			suggestedActions = append(suggestedActions,
+				"provide logs from other validators covering the same height range to determine whether the stall was global")
+		}
+
 		// Lower confidence when only this node has events after the stall point.
 		conf := model.ConfidenceMedium
 		active := 0
@@ -928,32 +1142,24 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 		if active <= 1 {
 			conf = model.ConfidenceLow
 		}
+
+		avgBlockNote := ""
+		if node.AvgBlockTime > 0 {
+			avgBlockNote = fmt.Sprintf(" Average block time was %s.", formatDuration(node.AvgBlockTime))
+		}
 		findings = append(findings, model.Finding{
-			ID:         "stall-after-last-commit-" + node.Name,
-			Title:      fmt.Sprintf("%s: no commits for %s after height %d", node.Name, formatDuration(node.StallDuration), node.HighestCommit),
+			ID:    "stall-after-last-commit-" + node.Name,
+			Title: fmt.Sprintf("%s: no commits for %s after height %d", node.Name, formatDuration(node.StallDuration), node.HighestCommit),
 			Severity:   model.SeverityHigh,
 			Confidence: conf,
 			Scope:      node.Name,
 			Summary: fmt.Sprintf(
 				"Last commit at h%d; no further commits observed for %s to the end of the log window.%s",
-				node.HighestCommit,
-				formatDuration(node.StallDuration),
-				func() string {
-					if node.AvgBlockTime > 0 {
-						return fmt.Sprintf(" Average block time was %s.", formatDuration(node.AvgBlockTime))
-					}
-					return ""
-				}(),
+				node.HighestCommit, formatDuration(node.StallDuration), avgBlockNote,
 			),
-			PossibleCauses: []string{
-				"quorum loss after height " + fmt.Sprintf("%d", node.HighestCommit),
-				"node crash or OOM kill",
-				"network partition or peer isolation",
-			},
-			SuggestedActions: []string{
-				fmt.Sprintf("provide logs from after %s to confirm whether the node recovered", node.LastCommitTime.UTC().Format(time.RFC3339)),
-				"check whether the node process is still running",
-			},
+			Evidence:         stallEv,
+			PossibleCauses:   possibleCauses,
+			SuggestedActions: suggestedActions,
 		})
 	}
 
