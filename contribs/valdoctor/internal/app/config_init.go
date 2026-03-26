@@ -11,8 +11,8 @@ import (
 
 // defaultConfigTemplate is written by `config init`. The commented TOML format
 // is more readable than a raw marshal and survives a first `config get`.
-const defaultConfigTemplate = `# gnodoctor configuration
-# Run 'gnodoctor config init --force' to reset to defaults.
+const defaultConfigTemplate = `# valdoctor configuration
+# Run 'valdoctor config init --force' to reset to defaults.
 
 # Maximum number of findings rendered in text output (0 = unlimited).
 max_findings = 20
@@ -41,7 +41,7 @@ func newConfigInitCmd(io commands.IO) *commands.Command {
 		commands.Metadata{
 			Name:       "init",
 			ShortUsage: "config init [flags]",
-			ShortHelp:  "initialize the gnodoctor configuration with default values",
+			ShortHelp:  "initialize the valdoctor configuration with default values",
 		},
 		cfg,
 		func(_ context.Context, _ []string) error {

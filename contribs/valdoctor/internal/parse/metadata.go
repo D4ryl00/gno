@@ -6,7 +6,7 @@ import (
 	"slices"
 	"sort"
 
-	"github.com/gnolang/gno/contribs/gnodoctor/internal/model"
+	"github.com/gnolang/gno/contribs/valdoctor/internal/model"
 	"github.com/pelletier/go-toml"
 )
 

@@ -22,7 +22,7 @@ func (c *configBaseCfg) RegisterFlags(fs *flag.FlagSet) {
 		&c.configPath,
 		"config-path",
 		defaultConfigPath(),
-		"path to the gnodoctor config.toml",
+		"path to the valdoctor config.toml",
 	)
 }
 
@@ -32,7 +32,7 @@ func newConfigCmd(io commands.IO) *commands.Command {
 		commands.Metadata{
 			Name:       "config",
 			ShortUsage: "config <subcommand> [flags]",
-			ShortHelp:  "gnodoctor configuration management",
+			ShortHelp:  "valdoctor configuration management",
 		},
 		commands.NewEmptyConfig(),
 		commands.HelpExec,

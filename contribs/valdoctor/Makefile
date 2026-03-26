@@ -8,7 +8,7 @@ install:
 
 .PHONY: build
 build:
-	go build -o build/gnodoctor .
+	go build -o build/valdoctor .
 
 lint:
 	$(golangci_lint) --config ../../.github/golangci.yml run ./...

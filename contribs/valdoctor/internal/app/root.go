@@ -7,7 +7,7 @@ import (
 func NewRootCmd(io commands.IO) *commands.Command {
 	cmd := commands.NewCommand(
 		commands.Metadata{
-			Name:       "gnodoctor",
+			Name:       "valdoctor",
 			ShortUsage: "<subcommand> [flags]",
 			ShortHelp:  "inspect Gnoland and TM2 incidents from genesis and logs",
 		},

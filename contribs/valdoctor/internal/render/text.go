@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gnolang/gno/contribs/gnodoctor/internal/model"
+	"github.com/gnolang/gno/contribs/valdoctor/internal/model"
 	"github.com/gnolang/gno/tm2/pkg/colors"
 )
 

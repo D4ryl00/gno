@@ -4,7 +4,7 @@
 
 Draft specification for a Go CLI tool, working name `doctor`.
 
-Note on naming: repository conventions for `contribs/` prefer binaries starting with `gno`, `gnoland`, or `gnokey`. If this tool is added to this repository, the final binary name may need to become `gnodoctor` or `gnoland-doctor`. This specification keeps `doctor` as the product name because that is the requested UX.
+Note on naming: repository conventions for `contribs/` prefer binaries starting with `gno`, `gnoland`, or `gnokey`. If this tool is added to this repository, the final binary name may need to become `valdoctor` or `gnoland-doctor`. This specification keeps `doctor` as the product name because that is the requested UX.
 
 ## Problem
 
@@ -295,7 +295,7 @@ Repository placement:
 Suggested repository shape:
 
 ```text
-contribs/gnodoctor/
+contribs/valdoctor/
   main.go
   README.md
   Makefile

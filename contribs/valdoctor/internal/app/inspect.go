@@ -12,10 +12,10 @@ import (
 
 	"golang.org/x/term"
 
-	"github.com/gnolang/gno/contribs/gnodoctor/internal/analyze"
-	"github.com/gnolang/gno/contribs/gnodoctor/internal/model"
-	"github.com/gnolang/gno/contribs/gnodoctor/internal/parse"
-	"github.com/gnolang/gno/contribs/gnodoctor/internal/render"
+	"github.com/gnolang/gno/contribs/valdoctor/internal/analyze"
+	"github.com/gnolang/gno/contribs/valdoctor/internal/model"
+	"github.com/gnolang/gno/contribs/valdoctor/internal/parse"
+	"github.com/gnolang/gno/contribs/valdoctor/internal/render"
 	"github.com/gnolang/gno/tm2/pkg/commands"
 )
 
@@ -63,7 +63,7 @@ func newInspectCmd(io commands.IO) *commands.Command {
 }
 
 func (c *inspectCfg) RegisterFlags(fs *flag.FlagSet) {
-	fs.StringVar(&c.configPath, "config", "", "path to a TOML config file (default: $XDG_CONFIG_HOME/gnodoctor/config.toml)")
+	fs.StringVar(&c.configPath, "config", "", "path to a TOML config file (default: $XDG_CONFIG_HOME/valdoctor/config.toml)")
 	fs.StringVar(&c.genesisPath, "genesis", "", "path to the genesis.json")
 	fs.Var(&c.logPaths, "log", "generic log file path; may be repeated")
 	fs.Var(&c.validatorLogs, "validator-log", "validator log file path; may be repeated")

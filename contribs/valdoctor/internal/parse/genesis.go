@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gnolang/gno/contribs/gnodoctor/internal/model"
+	"github.com/gnolang/gno/contribs/valdoctor/internal/model"
 )
 
-// minimalGenesis holds only the fields gnodoctor needs from genesis.json.
+// minimalGenesis holds only the fields valdoctor needs from genesis.json.
 // Using encoding/json avoids the amino codec requirement for app_state, which
 // would otherwise require importing gno.land/pkg/gnoland and the full GnoVM.
 type minimalGenesis struct {

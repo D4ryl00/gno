@@ -29,8 +29,8 @@ func defaultUserConfig() userConfig {
 
 // defaultConfigPath returns the XDG-compliant path for the user config file:
 //
-//	$XDG_CONFIG_HOME/gnodoctor/config.toml  (if XDG_CONFIG_HOME is set)
-//	~/.config/gnodoctor/config.toml         (otherwise)
+//	$XDG_CONFIG_HOME/valdoctor/config.toml  (if XDG_CONFIG_HOME is set)
+//	~/.config/valdoctor/config.toml         (otherwise)
 func defaultConfigPath() string {
 	dir := os.Getenv("XDG_CONFIG_HOME")
 	if dir == "" {
@@ -40,7 +40,7 @@ func defaultConfigPath() string {
 		}
 		dir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(dir, "gnodoctor", "config.toml")
+	return filepath.Join(dir, "valdoctor", "config.toml")
 }
 
 // loadConfig reads and merges configuration for the inspect command.
@@ -77,7 +77,7 @@ func loadConfig(explicitPath string) (userConfig, error) {
 func readConfigFile(path string) (userConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return userConfig{}, fmt.Errorf("unable to load config; try running `gnodoctor config init`: %w", err)
+		return userConfig{}, fmt.Errorf("unable to load config; try running `valdoctor config init`: %w", err)
 	}
 	var cfg userConfig
 	if err := toml.Unmarshal(data, &cfg); err != nil {

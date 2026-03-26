@@ -4,7 +4,7 @@ import (
 	"context"
 	"os"
 
-	"github.com/gnolang/gno/contribs/gnodoctor/internal/app"
+	"github.com/gnolang/gno/contribs/valdoctor/internal/app"
 	"github.com/gnolang/gno/tm2/pkg/commands"
 )
 

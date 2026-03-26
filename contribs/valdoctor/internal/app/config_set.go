@@ -21,8 +21,8 @@ func newConfigSetCmd(io commands.IO) *commands.Command {
 		commands.Metadata{
 			Name:       "set",
 			ShortUsage: "config set <key> <value>",
-			ShortHelp:  "set a gnodoctor configuration value",
-			LongHelp:   "Set a gnodoctor configuration value by key name. The config file is updated in place.",
+			ShortHelp:  "set a valdoctor configuration value",
+			LongHelp:   "Set a valdoctor configuration value by key name. The config file is updated in place.",
 		},
 		cfg,
 		func(_ context.Context, args []string) error {

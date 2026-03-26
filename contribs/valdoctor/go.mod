@@ -1,4 +1,4 @@
-module github.com/gnolang/gno/contribs/gnodoctor
+module github.com/gnolang/gno/contribs/valdoctor
 
 go 1.24.0
 

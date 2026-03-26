@@ -23,8 +23,8 @@ func newConfigGetCmd(io commands.IO) *commands.Command {
 		commands.Metadata{
 			Name:       "get",
 			ShortUsage: "config get [flags] [<key>]",
-			ShortHelp:  "show gnodoctor configuration values",
-			LongHelp:   "Show all gnodoctor configuration values, or a single value by key name.",
+			ShortHelp:  "show valdoctor configuration values",
+			LongHelp:   "Show all valdoctor configuration values, or a single value by key name.",
 		},
 		cfg,
 		func(_ context.Context, args []string) error {
