@@ -3,6 +3,7 @@ package parse
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	"github.com/gnolang/gno/contribs/gnodoctor/internal/model"
@@ -54,7 +55,7 @@ func MergeMetadata(items ...model.Metadata) model.Metadata {
 			merged.Version = item.Version
 		}
 		for name, node := range item.Nodes {
-			merged.Nodes[name] = node
+			merged.Nodes[name] = mergeMetadataNode(merged.Nodes[name], node)
 		}
 		for key, value := range item.PeerAliases {
 			merged.PeerAliases[key] = value
@@ -65,6 +66,32 @@ func MergeMetadata(items ...model.Metadata) model.Metadata {
 	}
 
 	return merged
+}
+
+func mergeMetadataNode(dst, src model.MetadataNode) model.MetadataNode {
+	if src.Role != "" {
+		dst.Role = src.Role
+	}
+	if len(src.Files) > 0 {
+		for _, file := range src.Files {
+			if !slices.Contains(dst.Files, file) {
+				dst.Files = append(dst.Files, file)
+			}
+		}
+	}
+	if src.NodeID != "" {
+		dst.NodeID = src.NodeID
+	}
+	if src.ValidatorName != "" {
+		dst.ValidatorName = src.ValidatorName
+	}
+	if src.ValidatorAddress != "" {
+		dst.ValidatorAddress = src.ValidatorAddress
+	}
+	if src.ValidatorPubKey != "" {
+		dst.ValidatorPubKey = src.ValidatorPubKey
+	}
+	return dst
 }
 
 func WriteMetadata(path string, meta model.Metadata) error {
@@ -112,14 +139,20 @@ func BuildGeneratedMetadata(genesis model.Genesis, sources []model.Source) model
 	}
 
 	if genesis.ValidatorNum == 1 {
+		validatorNodes := make([]string, 0)
 		for name, node := range meta.Nodes {
 			if node.Role == string(model.RoleValidator) {
-				node.ValidatorName = genesis.Validators[0].Name
-				node.ValidatorAddress = genesis.Validators[0].Address
-				node.ValidatorPubKey = genesis.Validators[0].PubKey
-				meta.Nodes[name] = node
-				break
+				validatorNodes = append(validatorNodes, name)
 			}
+		}
+		sort.Strings(validatorNodes)
+		if len(validatorNodes) == 1 {
+			name := validatorNodes[0]
+			node := meta.Nodes[name]
+			node.ValidatorName = genesis.Validators[0].Name
+			node.ValidatorAddress = genesis.Validators[0].Address
+			node.ValidatorPubKey = genesis.Validators[0].PubKey
+			meta.Nodes[name] = node
 		}
 	}
 

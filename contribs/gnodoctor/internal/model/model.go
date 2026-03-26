@@ -186,13 +186,13 @@ type NodeSummary struct {
 	MaxOutboundPeersHit int           `json:"max_outbound_peers_hit,omitempty"`
 
 	// Vote state from the most recent VoteSet debug logs (0 = not observed).
-	VoteStateHeight   int64 `json:"vote_state_height,omitempty"`
-	PrevotesReceived  int   `json:"prevotes_received,omitempty"`
-	PrevotesTotal     int   `json:"prevotes_total,omitempty"`
-	PrevotesMaj23     bool  `json:"prevotes_maj23,omitempty"`
-	PrecommitsReceived int  `json:"precommits_received,omitempty"`
-	PrecommitsTotal   int   `json:"precommits_total,omitempty"`
-	PrecommitsMaj23   bool  `json:"precommits_maj23,omitempty"`
+	VoteStateHeight    int64 `json:"vote_state_height,omitempty"`
+	PrevotesReceived   int   `json:"prevotes_received,omitempty"`
+	PrevotesTotal      int   `json:"prevotes_total,omitempty"`
+	PrevotesMaj23      bool  `json:"prevotes_maj23,omitempty"`
+	PrecommitsReceived int   `json:"precommits_received,omitempty"`
+	PrecommitsTotal    int   `json:"precommits_total,omitempty"`
+	PrecommitsMaj23    bool  `json:"precommits_maj23,omitempty"`
 
 	// Fast-sync: set when SwitchToConsensus was observed in this node's logs.
 	JoinedViaFastSync    bool  `json:"joined_via_fast_sync,omitempty"`
@@ -225,7 +225,6 @@ type InputSummary struct {
 	NodeCount       int    `json:"node_count"`
 	TimeWindowStart string `json:"time_window_start,omitempty"`
 	TimeWindowEnd   string `json:"time_window_end,omitempty"`
-	Strict          bool   `json:"strict"`
 }
 
 type Report struct {

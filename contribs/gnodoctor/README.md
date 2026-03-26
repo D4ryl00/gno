@@ -29,3 +29,5 @@ gnodoctor inspect \
   --log ./logs/* \
   --generate-metadata ./doctor-metadata.toml
 ```
+
+If `./doctor-metadata.toml` already exists, `gnodoctor` exits with code `2` instead of silently reusing a stale file.

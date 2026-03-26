@@ -32,7 +32,6 @@ type inspectCfg struct {
 	outputFormat     string
 	sinceRaw         string
 	untilRaw         string
-	strict           bool
 	verbose          bool
 	showUnclassified bool
 	maxFindings      int
@@ -76,7 +75,6 @@ func (c *inspectCfg) RegisterFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.outputFormat, "format", "", "report format: text or json (default: text)")
 	fs.StringVar(&c.sinceRaw, "since", "", "lower bound of the analysis window in RFC3339")
 	fs.StringVar(&c.untilRaw, "until", "", "upper bound of the analysis window in RFC3339")
-	fs.BoolVar(&c.strict, "strict", false, "fail on unresolved input quality issues")
 	fs.BoolVar(&c.verbose, "verbose", false, "include low-severity findings; show event details in health summary")
 	fs.BoolVar(&c.verbose, "v", false, "shorthand for -verbose")
 	fs.BoolVar(&c.showUnclassified, "show-unclassified", false, "print unclassified log lines at the end of the report")
@@ -91,7 +89,6 @@ func execInspect(_ context.Context, cfg *inspectCfg, io commands.IO) error {
 		return err
 	}
 	cfg.verbose = cfg.verbose || ucfg.Verbose
-	cfg.strict = cfg.strict || ucfg.Strict
 	if cfg.outputFormat == "" {
 		if ucfg.Format != "" {
 			cfg.outputFormat = ucfg.Format
@@ -180,32 +177,25 @@ func execInspect(_ context.Context, cfg *inspectCfg, io commands.IO) error {
 		Sources:  sources,
 		Events:   events,
 		Warnings: warnings,
-		Strict:   cfg.strict,
 		Verbose:  cfg.verbose,
 		Metadata: metadata,
 	})
 
+	var generationErr error
 	if cfg.generateMetadata != "" {
 		outPath := parse.NormalizePath(cfg.generateMetadata)
 		if _, statErr := os.Stat(outPath); statErr == nil {
-			warnings = append(warnings, fmt.Sprintf("metadata output path already exists: %s", outPath))
+			generationErr = fmt.Errorf("metadata output path already exists: %s", outPath)
 		} else {
 			meta := parse.BuildGeneratedMetadata(genesis, sources)
 			if writeErr := parse.WriteMetadata(outPath, meta); writeErr != nil {
-				warnings = append(warnings, fmt.Sprintf("unable to write generated metadata %s: %v", outPath, writeErr))
+				generationErr = fmt.Errorf("unable to write generated metadata %s: %w", outPath, writeErr)
 			} else {
 				report.MetadataGeneratedPath = outPath
 			}
 		}
 	}
 	report.Warnings = append([]string(nil), warnings...)
-
-	if cfg.strict {
-		if strictErr := strictValidation(report, warnings); strictErr != nil {
-			io.ErrPrintln(strictErr.Error())
-			return commands.ExitCodeError(2)
-		}
-	}
 
 	// Enable colors only when stdout is a real terminal and NO_COLOR is unset.
 	colorOutput := term.IsTerminal(int(os.Stdout.Fd())) && os.Getenv("NO_COLOR") == ""
@@ -227,6 +217,11 @@ func execInspect(_ context.Context, cfg *inspectCfg, io commands.IO) error {
 		io.Printf("%s\n", payload)
 	default:
 		return fmt.Errorf("unsupported --format %q", cfg.outputFormat)
+	}
+
+	if generationErr != nil {
+		io.ErrPrintln(generationErr.Error())
+		return commands.ExitCodeError(2)
 	}
 
 	if report.CriticalIssuesDetected {
@@ -429,16 +424,4 @@ func filterWindow(events []model.Event, since, until time.Time) []model.Event {
 		filtered = append(filtered, event)
 	}
 	return filtered
-}
-
-func strictValidation(report model.Report, warnings []string) error {
-	if len(warnings) > 0 {
-		return fmt.Errorf("strict mode failed due to %d parser or input warnings", len(warnings))
-	}
-	for _, node := range report.Nodes {
-		if node.Role == model.RoleUnknown {
-			return fmt.Errorf("strict mode failed because node %q has unresolved role", node.Name)
-		}
-	}
-	return nil
 }

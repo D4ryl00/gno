@@ -15,7 +15,6 @@ type userConfig struct {
 	MaxHealth   int    `toml:"max_health"   json:"max_health"   comment:"maximum number of node sections in health summary (0 = unlimited)"`
 	Format      string `toml:"format"       json:"format"       comment:"report format: text or json"`
 	Verbose     bool   `toml:"verbose"      json:"verbose"      comment:"show low-severity findings and per-event details in health summary"`
-	Strict      bool   `toml:"strict"       json:"strict"       comment:"exit with code 2 on unresolved input quality issues"`
 }
 
 // defaultUserConfig returns a userConfig with sensible defaults.
@@ -25,7 +24,6 @@ func defaultUserConfig() userConfig {
 		MaxHealth:   5,
 		Format:      "text",
 		Verbose:     false,
-		Strict:      false,
 	}
 }
 

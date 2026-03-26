@@ -27,10 +27,6 @@ format = "text"
 # Show verbose output including low-severity findings and per-event details
 # in the health summary (timeouts with path:line).
 verbose = false
-
-# Exit with code 2 when there are unresolved input quality issues
-# (unclassified log lines, unknown node roles, parser warnings).
-strict = false
 `
 
 type configInitCfg struct {

@@ -14,7 +14,6 @@ type Input struct {
 	Sources  []model.Source
 	Events   []model.Event
 	Warnings []string
-	Strict   bool
 	Verbose  bool
 	Metadata model.Metadata // optional; zero value means not provided
 }
@@ -34,7 +33,6 @@ func BuildReport(input Input) model.Report {
 			NodeCount:       len(nodes),
 			TimeWindowStart: formatMaybeTime(start),
 			TimeWindowEnd:   formatMaybeTime(end),
-			Strict:          input.Strict,
 		},
 		Nodes:    nodes,
 		Warnings: append([]string(nil), input.Warnings...),
@@ -493,13 +491,13 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 			}
 
 			findings = append(findings, model.Finding{
-				ID:         "consensus-panic-" + node,
-				Title:      fmt.Sprintf("Consensus panic on %s", node),
-				Severity:   model.SeverityCritical,
-				Confidence: model.ConfidenceHigh,
-				Scope:      node,
-				Summary:    "A CONSENSUS FAILURE!!! panic was logged. The node process terminated.",
-				Evidence:   ev,
+				ID:             "consensus-panic-" + node,
+				Title:          fmt.Sprintf("Consensus panic on %s", node),
+				Severity:       model.SeverityCritical,
+				Confidence:     model.ConfidenceHigh,
+				Scope:          node,
+				Summary:        "A CONSENSUS FAILURE!!! panic was logged. The node process terminated.",
+				Evidence:       ev,
 				PossibleCauses: possibleCauses,
 				SuggestedActions: []string{
 					"restart the node after resolving the underlying issue",
@@ -702,14 +700,14 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 			}
 
 			findings = append(findings, model.Finding{
-				ID:         "missing-commit-block-" + node,
-				Title:      fmt.Sprintf("%s repeatedly failed to finalize because the commit block was missing locally", node),
-				Severity:   model.SeverityHigh,
-				Confidence: model.ConfidenceHigh,
-				Scope:      node,
-				Summary:    fmt.Sprintf("Seen %d times. The node reached commit processing but did not have the block required for finalization.", count),
-				Evidence:   ev,
-				PossibleCauses: possibleCauses,
+				ID:               "missing-commit-block-" + node,
+				Title:            fmt.Sprintf("%s repeatedly failed to finalize because the commit block was missing locally", node),
+				Severity:         model.SeverityHigh,
+				Confidence:       model.ConfidenceHigh,
+				Scope:            node,
+				Summary:          fmt.Sprintf("Seen %d times. The node reached commit processing but did not have the block required for finalization.", count),
+				Evidence:         ev,
+				PossibleCauses:   possibleCauses,
 				SuggestedActions: suggestedActions,
 			})
 		}
@@ -843,14 +841,14 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 				summary += " No proposals were signed during this window — the validator was unable to propose."
 			}
 			findings = append(findings, model.Finding{
-				ID:             "remote-signer-failure-" + node,
-				Title:          fmt.Sprintf("Remote signer failures on %s", node),
-				Severity:       sev,
-				Confidence:     model.ConfidenceMedium,
-				Scope:          node,
-				Summary:        summary,
-				Evidence:       firstEvidence(nodeEvents, model.EventRemoteSignerFailure, 2),
-				PossibleCauses: possibleCauses,
+				ID:               "remote-signer-failure-" + node,
+				Title:            fmt.Sprintf("Remote signer failures on %s", node),
+				Severity:         sev,
+				Confidence:       model.ConfidenceMedium,
+				Scope:            node,
+				Summary:          summary,
+				Evidence:         firstEvidence(nodeEvents, model.EventRemoteSignerFailure, 2),
+				PossibleCauses:   possibleCauses,
 				SuggestedActions: suggestedActions,
 			})
 		}
@@ -860,8 +858,8 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 		// repeated consensus failures before that height was committed (or not).
 		if ns.MaxRoundSeen >= 3 {
 			findings = append(findings, model.Finding{
-				ID:    "round-escalation-" + node,
-				Title: fmt.Sprintf("%s reached round %d at height %d", node, ns.MaxRoundSeen, ns.MaxRoundHeight),
+				ID:         "round-escalation-" + node,
+				Title:      fmt.Sprintf("%s reached round %d at height %d", node, ns.MaxRoundSeen, ns.MaxRoundHeight),
 				Severity:   model.SeverityMedium,
 				Confidence: model.ConfidenceMedium,
 				Scope:      node,
@@ -885,8 +883,8 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 		// ── Repeated dial failures ────────────────────────────────────────────
 		if ns.DialFailureCount >= 5 {
 			findings = append(findings, model.Finding{
-				ID:    "dial-failures-" + node,
-				Title: fmt.Sprintf("%s had %d dial failures to peers", node, ns.DialFailureCount),
+				ID:         "dial-failures-" + node,
+				Title:      fmt.Sprintf("%s had %d dial failures to peers", node, ns.DialFailureCount),
 				Severity:   model.SeverityMedium,
 				Confidence: model.ConfidenceMedium,
 				Scope:      node,
@@ -1148,8 +1146,8 @@ func buildFindings(genesis model.Genesis, nodes []model.NodeSummary, events []mo
 			avgBlockNote = fmt.Sprintf(" Average block time was %s.", formatDuration(node.AvgBlockTime))
 		}
 		findings = append(findings, model.Finding{
-			ID:    "stall-after-last-commit-" + node.Name,
-			Title: fmt.Sprintf("%s: no commits for %s after height %d", node.Name, formatDuration(node.StallDuration), node.HighestCommit),
+			ID:         "stall-after-last-commit-" + node.Name,
+			Title:      fmt.Sprintf("%s: no commits for %s after height %d", node.Name, formatDuration(node.StallDuration), node.HighestCommit),
 			Severity:   model.SeverityHigh,
 			Confidence: conf,
 			Scope:      node.Name,
