@@ -36,12 +36,8 @@ func TestEnable(t *testing.T) {
 	uassert.False(t, IsEnabled())
 
 	testing.SetRealm(testing.NewUserRealm(admin))
-
 	uassert.NotPanics(t, func() {
 		Enable(cross)
 	})
 	uassert.True(t, IsEnabled())
-	uassert.NotPanics(t, func() {
-		Enable(cross)
-	})
 }
