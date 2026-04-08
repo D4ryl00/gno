@@ -34,6 +34,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  list-scenarios:
+    name: list scenarios
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build scenario matrix
+        id: list
+        run: |
+          matrix=$(ls misc/val-scenarios/scenarios/*.sh | sort | xargs -n1 basename | \
+            jq -R '{"script": ., "name": ("scenario-" + (.[:-3] | gsub("_"; "-")))}' | \
+            jq -sc '.')
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
   build-images:
     name: build docker images
     runs-on: ubuntu-latest
@@ -90,27 +106,11 @@ jobs:
     name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: build-images
+    needs: [build-images, list-scenarios]
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - script: 01_five_validators_reset_four.sh
-            name: scenario-01-five-validators-reset-four
-          - script: 02_four_validators_restart_staggered.sh
-            name: scenario-02-four-validators-restart-staggered
-          - script: 03_four_validators_restart_parallel.sh
-            name: scenario-03-four-validators-restart-parallel
-          - script: 04_counter_realm_churn.sh
-            name: scenario-04-counter-realm-churn
-          - script: 05_sentry_ip_rotation.sh
-            name: scenario-05-sentry-ip-rotation
-          - script: 06_gas_nondeterminism_check.sh
-            name: scenario-06-gas-nondeterminism-check
-          - script: 07_five_validators_reset_one.sh
-            name: scenario-07-five-validators-reset-one
-          - script: 08_five_validators_reset_two_below_consensus.sh
-            name: scenario-08-five-validators-reset-two-below-consensus
+        include: ${{ fromJson(needs.list-scenarios.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v5
 
