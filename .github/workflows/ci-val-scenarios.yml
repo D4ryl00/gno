@@ -128,10 +128,11 @@ jobs:
           WORK_ROOT: /tmp/gno-val-tests
         run: bash misc/val-scenarios/scenarios/${{ matrix.script }}
 
-      # - name: Upload scenario logs
-      #   if: always()
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: logs-${{ matrix.name }}
-      #     path: /tmp/gno-val-tests/${{ matrix.name }}/logs/
-      #     if-no-files-found: ignore
+      - name: Upload scenario logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.name }}
+          path: /tmp/gno-val-tests/${{ matrix.name }}/logs/
+          if-no-files-found: ignore
+          retention-days: 1
