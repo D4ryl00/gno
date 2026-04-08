@@ -29,6 +29,10 @@ on:
       - go.sum
   workflow_dispatch:
 
+concurrency:
+  group: val-scenarios-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-images:
     name: build docker images

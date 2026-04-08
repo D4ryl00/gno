@@ -30,5 +30,8 @@ start_validator val3
 wait_for_seconds 20
 
 call_realm val1 "gno.land/r/demo/scenario_counter" "Increment"
-query_render val1 "gno.land/r/demo/scenario_counter:"
+
+result="$(query_render val1 "gno.land/r/demo/scenario_counter:")"
+[ "$result" = "4" ] || die "expected counter=4, got: ${result}"
+
 print_cluster_status

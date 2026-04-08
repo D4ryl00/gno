@@ -16,7 +16,7 @@ It is inspired by `../gno-val-test`, but the setup here is reusable and scenario
 - `docker compose`
 - `jq`
 - `curl`
-- `zsh`
+- `bash` (4+)
 
 ## Build The Local Tooling Images
 

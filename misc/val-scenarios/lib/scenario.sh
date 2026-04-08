@@ -103,7 +103,7 @@ scenario_init() {
   KEY_HOME="${SCENARIO_DIR}/keys"
   NETWORK_NAME="${PROJECT_NAME}_chain"
 
-  printf '[%s] scenario dir: %s\n' "$SCENARIO_NAME" "$SCENARIO_DIR"
+  log "scenario dir: ${SCENARIO_DIR}"
 
   SCENARIO_NODES=()
   SCENARIO_VALIDATORS=()
@@ -901,7 +901,7 @@ rotate_sentry_ip() {
   if [ -n "$old_ip" ] && [ "$old_ip" = "$new_ip" ]; then
     compose stop "$sentry" >/dev/null
     compose rm -f "$sentry" >/dev/null
-    docker run -d --rm --name "$bumper2" --network "$(docker_network_name)" "$IMAGE_NAME" sh -c 'sleep 300' >/dev/null
+    docker run -d --rm --entrypoint sh --name "$bumper2" --network "$(docker_network_name)" "$IMAGE_NAME" -c 'sleep 300' >/dev/null
     compose up -d "$sentry" >/dev/null
     wait_for_rpc "$sentry" 90
     new_ip="$(node_ip "$sentry" || true)"
