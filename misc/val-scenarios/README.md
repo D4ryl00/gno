@@ -17,17 +17,17 @@ It is inspired by `../gno-val-test`, but the setup here is reusable and scenario
 - `jq`
 - `curl`
 - `zsh`
-- sibling Gno checkout at `../gno`
 
-## Build The Local Tooling Image
+## Build The Local Tooling Images
 
-The scripts expect a local Docker image containing both `gnoland` and `gnokey`.
+The scripts expect local Docker images for `gnoland`, `gnokey`, and `gnogenesis`.
 
 ```bash
-make build-image
+make build-images
 ```
 
-By default the image tag is `gno-scenario-all:local`. Override it with `IMAGE=...` if needed.
+By default the tags are `gnoland:local`, `gnokey:local`, and `gnogenesis:local`.
+Override them with `IMAGE=...`, `GNOKEY_IMAGE=...`, and `GNOGENESIS_IMAGE=...` if needed.
 
 ## Run A Scenario
 
@@ -39,7 +39,7 @@ make scenario-04
 Each run writes generated node data, keys, genesis, and compose output under:
 
 ```bash
-.work/<scenario-name>/
+/tmp/gno-val-tests/<scenario-name>/
 ```
 
 By default the scenario tears containers down on exit but keeps the generated data. To keep the network running after the script exits:
@@ -55,6 +55,7 @@ KEEP_UP=1 ./scenarios/05_sentry_ip_rotation.sh
 - `03_four_validators_restart_parallel.sh`: start 4 validators, stop all after 60s, restart all together
 - `04_counter_realm_churn.sh`: deploy a sample counter realm, submit transactions, reset one validator, continue submitting txs
 - `05_sentry_ip_rotation.sh`: run validators behind a sentry, recreate the sentry to force a new container IP, and verify the network keeps progressing
+- `06_gas_nondeterminism_check.sh`: restart a subset of validators, estimate addpkg gas on a warm node, and fail if the chain halts after the trigger tx
 
 ## Reusable Scenario API
 

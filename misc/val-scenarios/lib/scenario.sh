@@ -8,12 +8,12 @@ fi
 
 SCENARIO_SELF="${BASH_SOURCE[0]}"
 SCENARIO_LIB_DIR="$(cd "$(dirname "${SCENARIO_SELF}")" && pwd)"
-REPO_ROOT="$(cd "${SCENARIO_LIB_DIR}/.." && pwd)"
+REPO_ROOT="$(cd "${SCENARIO_LIB_DIR}/../../.." && pwd)"
 
 IMAGE_NAME="${IMAGE_NAME:-gnoland:local}"
 GNOKEY_IMAGE="${GNOKEY_IMAGE:-gnokey:local}"
 GNOGENESIS_IMAGE="${GNOGENESIS_IMAGE:-gnogenesis:local}"
-GNO_ROOT="${GNO_ROOT:-${REPO_ROOT}/gno}"
+GNO_ROOT="${GNO_ROOT:-${REPO_ROOT}}"
 WORK_ROOT="${WORK_ROOT:-/tmp/gno-val-tests}"
 CHAIN_ID="${CHAIN_ID:-dev}"
 TIMEOUT_COMMIT="${TIMEOUT_COMMIT:-1s}"
@@ -908,6 +908,10 @@ rotate_sentry_ip() {
   fi
 
   docker rm -f "$bumper" "$bumper2" >/dev/null 2>&1 || true
+  [ -n "$new_ip" ] || die "failed to resolve a new IP for sentry ${sentry}"
+  if [ -n "$old_ip" ] && [ "$old_ip" = "$new_ip" ]; then
+    die "sentry ${sentry} kept IP ${new_ip} after recreation; rotation scenario was not exercised"
+  fi
   log "sentry ${sentry} IP ${old_ip:-unknown} -> ${new_ip:-unknown}"
 }
 

@@ -5,12 +5,28 @@ on:
     branches:
       - master
     paths:
+      - .github/workflows/ci-val-scenarios.yml
       - misc/val-scenarios/**
+      - contribs/gnogenesis/**
+      - examples/**
       - Dockerfile
+      - gno.land/**
+      - gnovm/**
+      - tm2/**
+      - go.mod
+      - go.sum
   pull_request:
     paths:
+      - .github/workflows/ci-val-scenarios.yml
       - misc/val-scenarios/**
+      - contribs/gnogenesis/**
+      - examples/**
       - Dockerfile
+      - gno.land/**
+      - gnovm/**
+      - tm2/**
+      - go.mod
+      - go.sum
   workflow_dispatch:
 
 jobs:

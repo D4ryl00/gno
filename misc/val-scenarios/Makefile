@@ -1,7 +1,7 @@
 IMAGE             ?= gnoland:local
 GNOKEY_IMAGE      ?= gnokey:local
 GNOGENESIS_IMAGE  ?= gnogenesis:local
-GNO_ROOT          ?= $(shell pwd)/gno
+GNO_ROOT          ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 WORK_ROOT         ?= /tmp/gno-val-tests
 NODE              ?=
 
