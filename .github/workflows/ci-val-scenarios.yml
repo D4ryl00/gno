@@ -1,0 +1,117 @@
+name: ci / val-scenarios
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - misc/val-scenarios/**
+      - Dockerfile
+  pull_request:
+    paths:
+      - misc/val-scenarios/**
+      - Dockerfile
+  workflow_dispatch:
+
+jobs:
+  build-images:
+    name: build docker images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build gnoland image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: gnoland
+          tags: gnoland:local
+          load: true
+          cache-from: type=gha,scope=val-scenarios-gnoland
+          cache-to: type=gha,mode=max,scope=val-scenarios-gnoland
+
+      - name: Build gnokey image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: gnokey
+          tags: gnokey:local
+          load: true
+          cache-from: type=gha,scope=val-scenarios-gnokey
+          cache-to: type=gha,mode=max,scope=val-scenarios-gnokey
+
+      - name: Build gnogenesis image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          target: gnocontribs
+          tags: gnogenesis:local
+          load: true
+          cache-from: type=gha,scope=val-scenarios-gnocontribs
+          cache-to: type=gha,mode=max,scope=val-scenarios-gnocontribs
+
+      - name: Save images
+        run: docker save gnoland:local gnokey:local gnogenesis:local | gzip > /tmp/val-scenario-images.tar.gz
+
+      - name: Upload images artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: val-scenario-images
+          path: /tmp/val-scenario-images.tar.gz
+          retention-days: 1
+
+  run-scenarios:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: build-images
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - script: 01_five_validators_reset_four.sh
+            name: scenario-01-five-validators-reset-four
+          - script: 02_four_validators_restart_staggered.sh
+            name: scenario-02-four-validators-restart-staggered
+          - script: 03_four_validators_restart_parallel.sh
+            name: scenario-03-four-validators-restart-parallel
+          - script: 04_counter_realm_churn.sh
+            name: scenario-04-counter-realm-churn
+          - script: 05_sentry_ip_rotation.sh
+            name: scenario-05-sentry-ip-rotation
+          - script: 06_gas_nondeterminism_check.sh
+            name: scenario-06-gas-nondeterminism-check
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Download images artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: val-scenario-images
+          path: /tmp
+
+      - name: Load Docker images
+        run: docker load < /tmp/val-scenario-images.tar.gz
+
+      - name: Run ${{ matrix.name }}
+        env:
+          IMAGE_NAME: gnoland:local
+          GNOKEY_IMAGE: gnokey:local
+          GNOGENESIS_IMAGE: gnogenesis:local
+          GNO_ROOT: ${{ github.workspace }}
+          WORK_ROOT: /tmp/gno-val-tests
+        run: bash misc/val-scenarios/scenarios/${{ matrix.script }}
+
+      # - name: Upload scenario logs
+      #   if: always()
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: logs-${{ matrix.name }}
+      #     path: /tmp/gno-val-tests/${{ matrix.name }}/logs/
+      #     if-no-files-found: ignore

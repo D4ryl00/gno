@@ -1,0 +1,3 @@
+module = "gno.land/r/demo/scenario_counter"
+gno = "0.9"
+
