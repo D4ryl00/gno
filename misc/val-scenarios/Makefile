@@ -11,11 +11,13 @@ PROJECT_03 = scenario-03-four-validators-restart-parallel
 PROJECT_04 = scenario-04-counter-realm-churn
 PROJECT_05 = scenario-05-sentry-ip-rotation
 PROJECT_06 = scenario-06-gas-nondeterminism-check
+PROJECT_07 = scenario-07-five-validators-reset-one
+PROJECT_08 = scenario-08-five-validators-reset-two-below-consensus
 
 .PHONY: build-gnoland-image build-gnokey-image build-gnogenesis-image build-images clone-gno \
-        scenario-01 scenario-02 scenario-03 scenario-04 scenario-05 scenario-06 \
-        logs-01 logs-02 logs-03 logs-04 logs-05 logs-06 \
-        clean clean-01 clean-02 clean-03 clean-04 clean-05 clean-06 \
+        scenario-01 scenario-02 scenario-03 scenario-04 scenario-05 scenario-06 scenario-07 scenario-08 \
+        logs-01 logs-02 logs-03 logs-04 logs-05 logs-06 logs-07 logs-08 \
+        clean clean-01 clean-02 clean-03 clean-04 clean-05 clean-06 clean-07 clean-08 \
         status
 
 clone-gno:
@@ -57,6 +59,12 @@ clean-05:
 clean-06:
 	rm -rf $(WORK_ROOT)/$(PROJECT_06)
 
+clean-07:
+	rm -rf $(WORK_ROOT)/$(PROJECT_07)
+
+clean-08:
+	rm -rf $(WORK_ROOT)/$(PROJECT_08)
+
 scenario-01:
 	IMAGE_NAME=$(IMAGE) GNOKEY_IMAGE=$(GNOKEY_IMAGE) GNOGENESIS_IMAGE=$(GNOGENESIS_IMAGE) GNO_ROOT=$(GNO_ROOT) WORK_ROOT=$(WORK_ROOT) ./scenarios/01_five_validators_reset_four.sh
 
@@ -75,6 +83,12 @@ scenario-05:
 scenario-06:
 	IMAGE_NAME=$(IMAGE) GNOKEY_IMAGE=$(GNOKEY_IMAGE) GNOGENESIS_IMAGE=$(GNOGENESIS_IMAGE) GNO_ROOT=$(GNO_ROOT) WORK_ROOT=$(WORK_ROOT) ./scenarios/06_gas_nondeterminism_check.sh
 
+scenario-07:
+	IMAGE_NAME=$(IMAGE) GNOKEY_IMAGE=$(GNOKEY_IMAGE) GNOGENESIS_IMAGE=$(GNOGENESIS_IMAGE) GNO_ROOT=$(GNO_ROOT) WORK_ROOT=$(WORK_ROOT) ./scenarios/07_five_validators_reset_one.sh
+
+scenario-08:
+	IMAGE_NAME=$(IMAGE) GNOKEY_IMAGE=$(GNOKEY_IMAGE) GNOGENESIS_IMAGE=$(GNOGENESIS_IMAGE) GNO_ROOT=$(GNO_ROOT) WORK_ROOT=$(WORK_ROOT) ./scenarios/08_five_validators_reset_two_below_consensus.sh
+
 logs-01:
 	docker compose -p $(PROJECT_01) logs -f $(NODE)
 
@@ -92,6 +106,12 @@ logs-05:
 
 logs-06:
 	docker compose -p $(PROJECT_06) logs -f $(NODE)
+
+logs-07:
+	docker compose -p $(PROJECT_07) logs -f $(NODE)
+
+logs-08:
+	docker compose -p $(PROJECT_08) logs -f $(NODE)
 
 status:
 	@while true; do \

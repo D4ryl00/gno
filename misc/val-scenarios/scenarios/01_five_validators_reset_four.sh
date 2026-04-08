@@ -22,6 +22,9 @@ stop_validator val3
 stop_validator val4
 stop_validator val5
 
+# 1/5 validators running — chain must halt.
+assert_chain_halted val1 30
+
 reset_validator val2
 reset_validator val3
 reset_validator val4

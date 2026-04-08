@@ -107,6 +107,10 @@ jobs:
             name: scenario-05-sentry-ip-rotation
           - script: 06_gas_nondeterminism_check.sh
             name: scenario-06-gas-nondeterminism-check
+          - script: 07_five_validators_reset_one.sh
+            name: scenario-07-five-validators-reset-one
+          - script: 08_five_validators_reset_two_below_consensus.sh
+            name: scenario-08-five-validators-reset-two-below-consensus
     steps:
       - uses: actions/checkout@v5
 

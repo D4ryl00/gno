@@ -705,6 +705,19 @@ chain_advances() {
   return 1
 }
 
+# assert_chain_halted fails if the chain keeps producing blocks on <node>
+# within <timeout> seconds. Use this to verify that a deliberate halt occurred.
+assert_chain_halted() {
+  local node="${1:?node required}"
+  local timeout="${2:-30}"
+  local delta="${3:-2}"
+
+  if chain_advances "$node" "$timeout" "$delta"; then
+    die "expected chain to halt on ${node}, but it kept advancing"
+  fi
+  log "chain halted as expected on ${node}"
+}
+
 # assert_chain_advances fails if the chain does not produce at least <delta> new
 # blocks on <node> within <timeout> seconds. Use this to detect a chain halt.
 assert_chain_advances() {
@@ -901,6 +914,10 @@ node_ip() {
 
 rotate_sentry_ip() {
   local sentry="${1:?sentry name required}"
+  # Optional second argument: name of a shell function to call while the sentry
+  # is fully stopped (after removal, before bumpers and restart). Use it to run
+  # assertions that require the sentry to be down.
+  local while_down="${2:-}"
   [ "${NODE_ROLE[$sentry]:-}" = "sentry" ] || die "${sentry} is not a sentry"
 
   local old_ip
@@ -915,6 +932,10 @@ rotate_sentry_ip() {
   compose stop "$sentry" >/dev/null
   compose rm -f "$sentry" >/dev/null
   docker rm -f "$bumper" "$bumper2" >/dev/null 2>&1 || true
+
+  if [ -n "$while_down" ]; then
+    "$while_down"
+  fi
 
   docker run -d --rm --entrypoint sh --name "$bumper" --network "$(docker_network_name)" "$IMAGE_NAME" -c 'sleep 300' >/dev/null
   compose up -d "$sentry" >/dev/null
