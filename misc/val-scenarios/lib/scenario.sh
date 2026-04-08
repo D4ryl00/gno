@@ -636,7 +636,11 @@ stop_sentry() {
 reset_node() {
   local node="${1:?node required}"
   stop_node "$node" || true
-  rm -rf "${NODE_DATA_DIR[$node]}/db" "${NODE_DATA_DIR[$node]}/wal"
+  # db and wal files are owned by root (created inside the container), so
+  # remove them from inside a container to avoid host permission errors.
+  docker run --rm --entrypoint sh \
+    -v "${NODE_DATA_DIR[$node]}:/data" "$IMAGE_NAME" \
+    -c 'rm -rf /data/db /data/wal'
   printf '{"height":"0","round":"0","step":0}\n' > "${NODE_DATA_DIR[$node]}/secrets/priv_validator_state.json"
   cp "${SCENARIO_DIR}/genesis.json" "${NODE_DATA_DIR[$node]}/genesis.json"
   log "reset ${node}"
