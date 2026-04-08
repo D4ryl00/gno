@@ -413,7 +413,10 @@ persistent_peer_targets() {
         if [ "$target" = "$node" ]; then
           continue
         fi
-        if [ -z "${NODE_SENTRY[$target]}" ] || [ "${NODE_SENTRY[$target]}" = "$node" ]; then
+        # Only peer with validators that are not hidden behind this sentry.
+        # Hidden validators dial the sentry themselves and are listed in
+        # private_peer_ids; they must not appear in persistent_peers/seeds.
+        if [ -z "${NODE_SENTRY[$target]}" ]; then
           peers+=("$target")
         fi
       done
@@ -455,6 +458,18 @@ set_config_value() {
       "$key" "$value" >/dev/null
 }
 
+private_peer_ids_for_sentry() {
+  local sentry="${1:?sentry required}"
+  local -a ids=()
+  local target
+  for target in "${SCENARIO_VALIDATORS[@]}"; do
+    if [ "${NODE_SENTRY[$target]}" = "$sentry" ]; then
+      ids+=("${NODE_ID[$target]}")
+    fi
+  done
+  join_by ',' "${ids[@]}"
+}
+
 configure_nodes() {
   local node
   for node in "${SCENARIO_NODES[@]}"; do
@@ -468,6 +483,14 @@ configure_nodes() {
     set_config_value "$node" p2p.persistent_peers "$peers"
     set_config_value "$node" p2p.seeds "$peers"
     set_config_value "$node" consensus.timeout_commit "$TIMEOUT_COMMIT"
+
+    if [ "${NODE_ROLE[$node]}" = "sentry" ]; then
+      local private_ids
+      private_ids="$(private_peer_ids_for_sentry "$node")"
+      if [ -n "$private_ids" ]; then
+        set_config_value "$node" p2p.private_peer_ids "$private_ids"
+      fi
+    fi
   done
 }
 

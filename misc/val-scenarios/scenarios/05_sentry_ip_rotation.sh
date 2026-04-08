@@ -19,6 +19,6 @@ start_all_nodes
 assert_chain_advances val1 120 5
 
 rotate_sentry_ip sentry1
-wait_for_blocks val4 5 120
+assert_chain_advances val4 120 5
 
 print_cluster_status
