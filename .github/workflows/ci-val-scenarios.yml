@@ -33,6 +33,9 @@ concurrency:
   group: val-scenarios-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   list-scenarios:
     name: list scenarios
@@ -41,6 +44,8 @@ jobs:
       matrix: ${{ steps.list.outputs.matrix }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Build scenario matrix
         id: list
@@ -55,6 +60,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -113,6 +120,8 @@ jobs:
         include: ${{ fromJson(needs.list-scenarios.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Download images artifact
         uses: actions/download-artifact@v4
