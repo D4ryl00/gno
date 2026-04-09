@@ -651,6 +651,22 @@ reset_validator() {
   reset_node "$1"
 }
 
+safe_reset_node() {
+  local node="${1:?node required}"
+  stop_node "$node" || true
+  # Remove only db and wal; preserve priv_validator_state.json so the node
+  # cannot sign a block at a height/round/step it already committed (no double
+  # signing). genesis.json is left untouched as well.
+  docker run --rm --entrypoint sh \
+    -v "${NODE_DATA_DIR[$node]}:/data" "$IMAGE_NAME" \
+    -c 'rm -rf /data/db /data/wal'
+  log "safe-reset ${node}"
+}
+
+safe_reset_validator() {
+  safe_reset_node "$1"
+}
+
 wait_for_seconds() {
   local seconds="${1:?seconds required}"
   log "waiting ${seconds}s"

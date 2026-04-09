@@ -58,6 +58,8 @@ KEEP_UP=1 ./scenarios/05_sentry_ip_rotation.sh
 - `06_gas_nondeterminism_check.sh`: restart a subset of validators, estimate addpkg gas on a warm node, and fail if the chain halts after the trigger tx
 - `07_five_validators_reset_one.sh`: start 5 validators, stop/reset/restart 1 — 4/5 remain above the 2/3 threshold so the chain must keep advancing throughout
 - `08_five_validators_reset_two_below_consensus.sh`: start 5 validators, stop/reset 2 — 3/5 drops below the 2/3 threshold so the chain must halt, then verify it resumes after both validators are restarted
+- `09_five_validators_safe_reset_one.sh`: same as 07 but uses a safe reset (db + wal only, `priv_validator_state` preserved) to avoid double signing
+- `10_five_validators_safe_reset_two_below_consensus.sh`: same as 08 but uses a safe reset
 
 ## Reusable Scenario API
 
