@@ -50,7 +50,7 @@ jobs:
       - name: Build scenario matrix
         id: list
         run: |
-          matrix=$(ls misc/val-scenarios/scenarios/*.sh | sort | xargs -n1 basename | \
+          matrix=$(find misc/val-scenarios/scenarios -maxdepth 1 -name '*.sh' | sort | xargs -n1 basename | \
             jq -R '{"script": ., "name": ("scenario-" + (.[:-3] | gsub("_"; "-")))}' | \
             jq -sc '.')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
