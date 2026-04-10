@@ -42,6 +42,7 @@ declare -A NODE_ID=()
 declare -A NODE_ADDRESS=()
 declare -A NODE_PUBKEY=()
 declare -A NODE_DATA_DIR=()
+declare -A NODE_POWER=()
 
 SCENARIO_NAME=""
 PROJECT_NAME=""
@@ -118,6 +119,7 @@ scenario_init() {
   NODE_ADDRESS=()
   NODE_PUBKEY=()
   NODE_DATA_DIR=()
+  NODE_POWER=()
 }
 
 next_rpc_port() {
@@ -155,6 +157,7 @@ gen_validator() {
   local rpc_port=""
   local sentry=""
   local pex="true"
+  local power="1"
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -171,6 +174,10 @@ gen_validator() {
         pex="${2:?missing pex value}"
         shift 2
         ;;
+      --power)
+        power="${2:?missing power value}"
+        shift 2
+        ;;
       *)
         die "unknown gen_validator option: $1"
         ;;
@@ -182,6 +189,7 @@ gen_validator() {
   fi
 
   register_node "$name" validator "$rpc_port" "$pex" "$sentry"
+  NODE_POWER[$name]="$power"
 }
 
 gen_sentry() {
@@ -330,8 +338,8 @@ generate_genesis() {
   local valset_entries=""
   local node
   for node in "${SCENARIO_VALIDATORS[@]}"; do
-    valset_entries+="$(printf '\t\t\t\t{Address: address("%s"), PubKey: "%s", VotingPower: 10},\n' \
-      "${NODE_ADDRESS[$node]}" "${NODE_PUBKEY[$node]}")"
+    valset_entries+="$(printf '\t\t\t\t{Address: address("%s"), PubKey: "%s", VotingPower: %s},\n' \
+      "${NODE_ADDRESS[$node]}" "${NODE_PUBKEY[$node]}" "${NODE_POWER[$node]:-1}")"
   done
   awk -v entries="$valset_entries" \
     '/\/\/ GEN:VALSET/ { printf "%s", entries; next } { print }' \
@@ -370,7 +378,7 @@ generate_genesis() {
       --name "$node" \
       --address "${NODE_ADDRESS[$node]}" \
       --pub-key "${NODE_PUBKEY[$node]}" \
-      --power 10 >/dev/null
+      --power "${NODE_POWER[$node]:-1}" >/dev/null
   done
 
   log "adding test1 balance"
