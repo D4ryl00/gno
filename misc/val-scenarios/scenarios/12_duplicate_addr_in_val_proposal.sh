@@ -21,7 +21,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/lib/scenario.sh"
 
-scenario_init "scenario-12-duplicate-addr-in-val-proposal"
+scenario_init "scenario-12"
 trap scenario_finish EXIT
 
 gen_validator val1

@@ -8,7 +8,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/lib/scenario.sh"
 
-scenario_init "scenario-10-five-validators-safe-reset-two-below-consensus"
+scenario_init "scenario-10"
 trap scenario_finish EXIT
 
 gen_validator val1

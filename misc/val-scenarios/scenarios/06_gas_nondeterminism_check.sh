@@ -26,7 +26,7 @@ source "${ROOT_DIR}/lib/scenario.sh"
 ADD_PKG_PROBE_GAS_WANTED="${ADD_PKG_PROBE_GAS_WANTED:-50000000}"
 ADD_PKG_GAS_MARGIN="${ADD_PKG_GAS_MARGIN:-0}"
 
-scenario_init "scenario-06-gas-nondeterminism-check"
+scenario_init "scenario-06"
 trap scenario_finish EXIT
 
 gen_validator val1

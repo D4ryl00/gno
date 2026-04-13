@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/lib/scenario.sh"
 
-scenario_init "scenario-04-counter-realm-churn"
+scenario_init "scenario-04"
 trap scenario_finish EXIT
 
 gen_validator val1

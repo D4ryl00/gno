@@ -87,11 +87,14 @@ Scenarios source `lib/scenario.sh` and use a small set of helpers:
 
 ## Adding A New Scenario
 
+Scenario files must follow the naming pattern `NN_<name>.sh` (e.g. `13_my_new_scenario.sh`), where `NN` is a zero-padded two-digit number. The Makefile auto-discovers files matching `scenarios/*.sh` and generates `scenario-NN`, `logs-NN`, and `clean-NN` targets from the numeric prefix. The script must call `scenario_init "scenario-NN"` with the matching number so that the docker-compose project name and work directory align with those targets.
+
 The intended flow is:
 
-1. `source` the shared library
-2. declare validators / sentries with `gen_validator` and `gen_sentry`
-3. call `prepare_network`
-4. compose the scenario out of lifecycle and transaction helpers
+1. name the file `NN_<name>.sh` and call `scenario_init "scenario-NN"`
+2. `source` the shared library
+3. declare validators / sentries with `gen_validator` and `gen_sentry`
+4. call `prepare_network`
+5. compose the scenario out of lifecycle and transaction helpers
 
 See any file under `scenarios/` for examples.

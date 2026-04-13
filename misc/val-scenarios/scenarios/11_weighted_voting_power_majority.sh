@@ -9,7 +9,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/lib/scenario.sh"
 
-scenario_init "scenario-11-weighted-voting-power-majority"
+scenario_init "scenario-11"
 trap scenario_finish EXIT
 
 gen_validator val1 --power 10
