@@ -4,19 +4,11 @@ set -euo pipefail
 # Scenario 12: governance proposal with a duplicate validator address.
 #
 # A single NewPropRequest contains two entries for the same validator address:
-#   1. { Address: val2, VotingPower: 0 }       — remove
+#   1. { Address: val2, VotingPower: 0 }                    — remove
 #   2. { Address: val2, PubKey: ..., VotingPower: 5 } — re-add with new power
 #
-# Expected behaviour (when the bug is fixed):
-#   val2 ends up with VotingPower=5 (last entry wins) and the chain keeps
-#   advancing.
-#
-# Actual behaviour (current):
-#   The proposal execution fails/panics because the validator-set updater does
-#   not tolerate duplicate addresses in the same proposal batch.
-#
-# This scenario is intentionally expected to fail until the underlying bug is
-# resolved, and is kept here to detect when it gets fixed.
+# val2 should end up with VotingPower=5 (last entry wins) and the chain should
+# keep advancing.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/lib/scenario.sh"
@@ -96,11 +88,10 @@ GNOEOF
 
 log "estimating gas for the validator proposal script"
 run_gas="$(estimate_run_gas val1 "${script_dir}/change_voting_power.gno" 50000000)"
-log "gas estimate: ${run_gas}; submitting validator proposal with duplicate address (expected to fail until bug is fixed)"
+log "gas estimate: ${run_gas}; submitting validator proposal with duplicate address"
 run_script val1 "${script_dir}/change_voting_power.gno" "$run_gas"
 
-# If the proposal executed successfully, val2 now has VotingPower=5.
-# The chain must keep advancing with the updated validator set.
+# val2 now has VotingPower=5; the chain must keep advancing.
 assert_chain_advances val1 120 5
 
 print_cluster_status
