@@ -29,6 +29,24 @@ make build-images
 By default the tags are `gnoland:local`, `gnokey:local`, and `gnogenesis:local`.
 Override them with `IMAGE=...`, `GNOKEY_IMAGE=...`, and `GNOGENESIS_IMAGE=...` if needed.
 
+To build images from a GitHub fork, set `GH_USER`. `GH_REPO` defaults to `gno` and `GH_BRANCH` defaults to `master`. Image tags are derived automatically as `<base>:<GH_USER>-<GH_BRANCH>` (slashes in the branch name become dashes), so multiple versions can coexist without overwriting each other.
+
+```bash
+make build-images GH_USER=gnolang
+# → gnoland:gnolang-master, gnokey:gnolang-master, gnogenesis:gnolang-master
+
+make build-images GH_USER=gnolang GH_REPO=gno GH_BRANCH=feat/my-branch
+# → gnoland:gnolang-feat-my-branch, gnokey:gnolang-feat-my-branch, gnogenesis:gnolang-feat-my-branch
+```
+
+The repository is cloned once to `/tmp/gno-remote-build` and reused across subsequent builds. To force a fresh clone, run `make fetch-remote` with the same variables.
+
+To run a scenario against a previously built fork image, pass the matching tag:
+
+```bash
+make scenario-12 GH_USER=gnolang GH_BRANCH=feat/my-branch
+```
+
 ## Run A Scenario
 
 ```bash
