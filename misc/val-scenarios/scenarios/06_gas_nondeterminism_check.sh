@@ -55,6 +55,32 @@ wait_for_height val3 "${restart_height}" 120
 wait_for_height val4 "${restart_height}" 120
 wait_for_blocks val1 5 120
 
+# Generate the counter realm package inline so no external packages/ dir is needed.
+pkg_dir="${SCENARIO_DIR}/packages/scenario-counter"
+mkdir -p "$pkg_dir"
+
+cat > "${pkg_dir}/gnomod.toml" << 'EOF'
+module = "gno.land/r/demo/scenario_counter"
+gno = "0.9"
+EOF
+
+cat > "${pkg_dir}/counter.gno" << 'EOF'
+package scenario_counter
+
+import "strconv"
+
+var counter int
+
+func Increment(_ realm) int {
+	counter++
+	return counter
+}
+
+func Render(_ string) string {
+	return strconv.Itoa(counter)
+}
+EOF
+
 # Estimate the addpkg gas on a restarted warm validator, then submit the same
 # tx through that warm validator with --simulate=skip. On buggy binaries this
 # lets the tx reach consensus while still being too expensive for the cold
@@ -62,7 +88,7 @@ wait_for_blocks val1 5 120
 warm_gas_used="$(
   estimate_add_pkg_gas \
     val3 \
-    "${ROOT_DIR}/packages/scenario-counter" \
+    "$pkg_dir" \
     "gno.land/r/demo/scenario_counter" \
     "${ADD_PKG_PROBE_GAS_WANTED}"
 )"
@@ -80,7 +106,7 @@ set +e
 tx_output="$(
   add_pkg \
     val3 \
-    "${ROOT_DIR}/packages/scenario-counter" \
+    "$pkg_dir" \
     "gno.land/r/demo/scenario_counter" \
     "${add_pkg_gas_wanted}" \
     skip 2>&1

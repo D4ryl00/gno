@@ -16,7 +16,33 @@ prepare_network
 start_all_nodes
 wait_for_blocks val1 5 120
 
-add_pkg val1 "${ROOT_DIR}/packages/scenario-counter" "gno.land/r/demo/scenario_counter"
+# Generate the counter realm package inline so no external packages/ dir is needed.
+pkg_dir="${SCENARIO_DIR}/packages/scenario-counter"
+mkdir -p "$pkg_dir"
+
+cat > "${pkg_dir}/gnomod.toml" << 'EOF'
+module = "gno.land/r/demo/scenario_counter"
+gno = "0.9"
+EOF
+
+cat > "${pkg_dir}/counter.gno" << 'EOF'
+package scenario_counter
+
+import "strconv"
+
+var counter int
+
+func Increment(_ realm) int {
+	counter++
+	return counter
+}
+
+func Render(_ string) string {
+	return strconv.Itoa(counter)
+}
+EOF
+
+add_pkg val1 "$pkg_dir" "gno.land/r/demo/scenario_counter"
 wait_for_seconds 5
 
 call_realm val1 "gno.land/r/demo/scenario_counter" "Increment"

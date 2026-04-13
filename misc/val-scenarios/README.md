@@ -61,6 +61,7 @@ KEEP_UP=1 ./scenarios/05_sentry_ip_rotation.sh
 - `09_five_validators_safe_reset_one.sh`: same as 07 but uses a safe reset (db + wal only, `priv_validator_state` preserved) to avoid double signing
 - `10_five_validators_safe_reset_two_below_consensus.sh`: same as 08 but uses a safe reset
 - `11_weighted_voting_power_majority.sh`: 4 validators with voting power 10/1/1/1 — val1 alone holds >2/3 of total power, so stopping val2–4 must not halt the chain
+- `12_duplicate_addr_in_val_proposal.sh`: governance proposal with two entries for the same validator address (VotingPower=0 then VotingPower=5) — expected to end with the validator at power 5, but currently fails due to a bug (**tracking scenario**: should pass once the bug is fixed)
 
 ## Reusable Scenario API
 
@@ -83,10 +84,6 @@ Scenarios source `lib/scenario.sh` and use a small set of helpers:
 - `print_cluster_status`
 
 `wait_for_seconds` is used instead of `wait` to avoid colliding with Bash’s built-in `wait`.
-
-## Package Fixture
-
-`packages/scenario-counter` contains a small realm used by the transaction scenario.
 
 ## Adding A New Scenario
 

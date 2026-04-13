@@ -867,6 +867,7 @@ run_script() {
   local target_node="${1:?target node required}"
   local script_path="${2:?script path required}"
   local gas_wanted="${3:-$TX_GAS_WANTED_RUN}"
+  local simulate_mode="${4:-}"
 
   local abs_script
   local script_dir
@@ -875,18 +876,42 @@ run_script() {
   script_dir="$(dirname "$abs_script")"
   script_name="$(basename "$abs_script")"
 
+  local -a cmd=(
+    maketx run
+      --gas-fee "$TX_GAS_FEE"
+      --gas-wanted "$gas_wanted"
+      --broadcast=true
+      --chainid "$CHAIN_ID"
+      --remote "${NODE_SERVICE[$target_node]}:26657"
+      --home /keys
+      --insecure-password-stdin
+  )
+
+  if [ -n "$simulate_mode" ]; then
+    cmd+=(--simulate "$simulate_mode")
+  fi
+
+  cmd+=("$TX_KEY_NAME" "/script/${script_name}")
+
   gnokey_tx_with_password \
     -v "${script_dir}:/script:ro" \
-    maketx run \
-      --gas-fee "$TX_GAS_FEE" \
-      --gas-wanted "$gas_wanted" \
-      --broadcast=true \
-      --chainid "$CHAIN_ID" \
-      --remote "${NODE_SERVICE[$target_node]}:26657" \
-      --home /keys \
-      --insecure-password-stdin \
-      "$TX_KEY_NAME" \
-      "/script/${script_name}"
+    "${cmd[@]}"
+}
+
+estimate_run_gas() {
+  local target_node="${1:?target node required}"
+  local script_path="${2:?script path required}"
+  local probe_gas_wanted="${3:-$TX_GAS_WANTED_RUN}"
+
+  local output
+  output="$(run_script "$target_node" "$script_path" "$probe_gas_wanted" only)"
+  printf '%s\n' "$output" >&2
+
+  local gas_used
+  gas_used="$(printf '%s\n' "$output" | awk '/GAS USED:/ {print $3; exit}')"
+  [ -n "$gas_used" ] || die "failed to parse simulated gas usage for run on ${target_node}"
+
+  printf '%s\n' "$gas_used"
 }
 
 send_coins() {
