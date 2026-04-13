@@ -488,8 +488,10 @@ configure_nodes() {
     set_config_value "$node" rpc.laddr "tcp://0.0.0.0:26657"
     set_config_value "$node" p2p.laddr "tcp://0.0.0.0:26656"
     set_config_value "$node" p2p.pex "${NODE_PEX[$node]}"
-    set_config_value "$node" p2p.persistent_peers "$peers"
-    set_config_value "$node" p2p.seeds "$peers"
+    if [ -n "$peers" ]; then
+      set_config_value "$node" p2p.persistent_peers "$peers"
+      set_config_value "$node" p2p.seeds "$peers"
+    fi
     set_config_value "$node" consensus.timeout_commit "$TIMEOUT_COMMIT"
 
     if [ "${NODE_ROLE[$node]}" = "sentry" ]; then
