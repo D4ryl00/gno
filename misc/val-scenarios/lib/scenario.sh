@@ -609,24 +609,29 @@ start_sentry() {
 }
 
 start_all_nodes() {
-  local -a ordered=()
+  [ "${#SCENARIO_NODES[@]}" -gt 0 ] || die "no nodes to start"
+
   local node
-  for node in "${SCENARIO_SENTRIES[@]}"; do
-    ordered+=("$node")
-  done
-  for node in "${SCENARIO_VALIDATORS[@]}"; do
-    ordered+=("$node")
-  done
 
-  [ "${#ordered[@]}" -gt 0 ] || die "no nodes to start"
-  compose up -d "${ordered[@]}" >/dev/null
+  # Start sentries first and wait for them before launching validators so
+  # that the P2P gateway is ready when validators try to dial out.
+  if [ "${#SCENARIO_SENTRIES[@]}" -gt 0 ]; then
+    compose up -d "${SCENARIO_SENTRIES[@]}" >/dev/null
+    for node in "${SCENARIO_SENTRIES[@]}"; do
+      wait_for_rpc "$node" 90
+      _capture_node_logs "$node"
+    done
+  fi
 
-  for node in "${ordered[@]}"; do
-    wait_for_rpc "$node" 90
-    _capture_node_logs "$node"
-  done
+  if [ "${#SCENARIO_VALIDATORS[@]}" -gt 0 ]; then
+    compose up -d "${SCENARIO_VALIDATORS[@]}" >/dev/null
+    for node in "${SCENARIO_VALIDATORS[@]}"; do
+      wait_for_rpc "$node" 90
+      _capture_node_logs "$node"
+    done
+  fi
 
-  log "started ${#ordered[@]} node(s)"
+  log "started ${#SCENARIO_NODES[@]} node(s)"
 }
 
 stop_node() {

@@ -54,7 +54,13 @@ endef
 
 $(foreach s,$(SCENARIO_SCRIPTS),$(eval $(call SCENARIO_RULES,$(s))))
 
-.PHONY: build-gnoland-image build-gnokey-image build-gnogenesis-image build-images fetch-remote clone-gno clean status
+# All scenario-NN targets in order, for use by the `test` rule.
+SCENARIO_TARGETS := $(foreach s,$(SCENARIO_SCRIPTS),scenario-$(call scenario_num,$(s)))
+
+.PHONY: test build-gnoland-image build-gnokey-image build-gnogenesis-image build-images fetch-remote clone-gno clean status
+
+# Run every scenario in order, stopping on the first failure.
+test: $(SCENARIO_TARGETS)
 
 # Stamp-file rule: clones once; subsequent builds skip it until fetch-remote is called.
 $(_FETCH_STAMP):
