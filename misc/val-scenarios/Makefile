@@ -31,11 +31,13 @@ GNO_ROOT          ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 _FETCH_PREREQ     :=
 endif
 
-# Auto-discover all scenario scripts ordered by filename.
-SCENARIO_SCRIPTS := $(sort $(wildcard scenarios/*.sh))
+# Auto-discover scenario scripts by tier, ordered by filename.
+BASICS_SCENARIO_SCRIPTS := $(sort $(wildcard basics/*.sh))
+ADVANCED_SCENARIO_SCRIPTS := $(sort $(wildcard advanced/*.sh))
+SCENARIO_SCRIPTS := $(BASICS_SCENARIO_SCRIPTS) $(ADVANCED_SCENARIO_SCRIPTS)
 
 # Extract the numeric prefix from a script path.
-# e.g. scenarios/01_five_validators_reset_four.sh -> 01
+# e.g. basics/02_four_validators_restart_staggered.sh -> 02
 scenario_num = $(word 1,$(subst _, ,$(notdir $(patsubst %.sh,%,$(1)))))
 
 # Generate scenario-NN / logs-NN / clean-NN rules for every discovered script.
@@ -56,13 +58,23 @@ endef
 
 $(foreach s,$(SCENARIO_SCRIPTS),$(eval $(call SCENARIO_RULES,$(s))))
 
-# All scenario-NN targets in order, for use by the `test` rule.
-SCENARIO_TARGETS := $(foreach s,$(SCENARIO_SCRIPTS),scenario-$(call scenario_num,$(s)))
+# Scenario target groups.
+BASICS_SCENARIO_TARGETS := $(foreach s,$(BASICS_SCENARIO_SCRIPTS),scenario-$(call scenario_num,$(s)))
+ADVANCED_SCENARIO_TARGETS := $(foreach s,$(ADVANCED_SCENARIO_SCRIPTS),scenario-$(call scenario_num,$(s)))
+SCENARIO_TARGETS := $(BASICS_SCENARIO_TARGETS) $(ADVANCED_SCENARIO_TARGETS)
 
-.PHONY: test build-gnoland-image build-gnokey-image build-gnogenesis-image build-valsigner-image build-images fetch-remote clone-gno clean status
+.PHONY: test test-basics test-advanced test-all basics advanced build-gnoland-image build-gnokey-image build-gnogenesis-image build-valsigner-image build-images fetch-remote clone-gno clean status
 
-# Run every scenario in order, stopping on the first failure.
-test: $(SCENARIO_TARGETS)
+# Run the CI/basic scenarios in order, stopping on the first failure.
+test: test-basics
+
+test-basics basics: $(BASICS_SCENARIO_TARGETS)
+
+# Run the locally-oriented advanced scenarios in order.
+test-advanced advanced: $(ADVANCED_SCENARIO_TARGETS)
+
+# Run every scenario in order.
+test-all: $(SCENARIO_TARGETS)
 
 # Stamp-file rule: clones once; subsequent builds skip it until fetch-remote is called.
 $(_FETCH_STAMP):

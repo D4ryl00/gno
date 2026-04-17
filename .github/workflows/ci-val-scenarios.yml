@@ -51,7 +51,7 @@ jobs:
       - name: Build scenario matrix
         id: list
         run: |
-          matrix=$(find misc/val-scenarios/scenarios -maxdepth 1 -name '*.sh' | sort | xargs -n1 basename | \
+          matrix=$(find misc/val-scenarios/basics -maxdepth 1 -name '*.sh' | sort | xargs -n1 basename | \
             jq -R '{"script": ., "name": ("scenario-" + (.[:-3] | gsub("_"; "-")))}' | \
             jq -sc '.')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
@@ -146,7 +146,7 @@ jobs:
           GNOGENESIS_IMAGE: gnogenesis:local
           GNO_ROOT: ${{ github.workspace }}
           WORK_ROOT: /tmp/gno-val-tests
-        run: bash misc/val-scenarios/scenarios/"$SCENARIO_SCRIPT"
+        run: bash misc/val-scenarios/basics/"$SCENARIO_SCRIPT"
 
       - name: Upload scenario logs
         if: failure()
