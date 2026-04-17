@@ -19,12 +19,14 @@ _IMAGE_TAG        := $(GH_USER)-$(subst /,-,$(GH_BRANCH))
 IMAGE             ?= gnoland:$(_IMAGE_TAG)
 GNOKEY_IMAGE      ?= gnokey:$(_IMAGE_TAG)
 GNOGENESIS_IMAGE  ?= gnogenesis:$(_IMAGE_TAG)
+VALSIGNER_IMAGE   ?= valsignerd:$(_IMAGE_TAG)
 GNO_ROOT          := $(_REMOTE_GNO_ROOT)
 _FETCH_PREREQ     := $(_FETCH_STAMP)
 else
 IMAGE             ?= gnoland:local
 GNOKEY_IMAGE      ?= gnokey:local
 GNOGENESIS_IMAGE  ?= gnogenesis:local
+VALSIGNER_IMAGE   ?= valsignerd:local
 GNO_ROOT          ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 _FETCH_PREREQ     :=
 endif
@@ -42,7 +44,7 @@ define SCENARIO_RULES
 .PHONY: scenario-$(call scenario_num,$(1)) logs-$(call scenario_num,$(1)) clean-$(call scenario_num,$(1))
 
 scenario-$(call scenario_num,$(1)):
-	IMAGE_NAME=$(IMAGE) GNOKEY_IMAGE=$(GNOKEY_IMAGE) GNOGENESIS_IMAGE=$(GNOGENESIS_IMAGE) GNO_ROOT=$(GNO_ROOT) WORK_ROOT=$(WORK_ROOT) ./$(1)
+	IMAGE_NAME=$(IMAGE) GNOKEY_IMAGE=$(GNOKEY_IMAGE) GNOGENESIS_IMAGE=$(GNOGENESIS_IMAGE) VALSIGNER_IMAGE=$(VALSIGNER_IMAGE) GNO_ROOT=$(GNO_ROOT) WORK_ROOT=$(WORK_ROOT) ./$(1)
 
 logs-$(call scenario_num,$(1)):
 	docker compose -p scenario-$(call scenario_num,$(1)) logs -f $(NODE)
@@ -57,7 +59,7 @@ $(foreach s,$(SCENARIO_SCRIPTS),$(eval $(call SCENARIO_RULES,$(s))))
 # All scenario-NN targets in order, for use by the `test` rule.
 SCENARIO_TARGETS := $(foreach s,$(SCENARIO_SCRIPTS),scenario-$(call scenario_num,$(s)))
 
-.PHONY: test build-gnoland-image build-gnokey-image build-gnogenesis-image build-images fetch-remote clone-gno clean status
+.PHONY: test build-gnoland-image build-gnokey-image build-gnogenesis-image build-valsigner-image build-images fetch-remote clone-gno clean status
 
 # Run every scenario in order, stopping on the first failure.
 test: $(SCENARIO_TARGETS)
@@ -91,7 +93,10 @@ build-gnokey-image: $(_FETCH_PREREQ)
 build-gnogenesis-image: $(_FETCH_PREREQ)
 	docker build -t $(GNOGENESIS_IMAGE) -f $(GNO_ROOT)/Dockerfile --target gnocontribs $(GNO_ROOT)
 
-build-images: build-gnoland-image build-gnokey-image build-gnogenesis-image
+build-valsigner-image: $(_FETCH_PREREQ)
+	docker build -t $(VALSIGNER_IMAGE) -f $(GNO_ROOT)/Dockerfile --target valsignerd $(GNO_ROOT)
+
+build-images: build-gnoland-image build-gnokey-image build-gnogenesis-image build-valsigner-image
 
 clean:
 	rm -rf $(WORK_ROOT)

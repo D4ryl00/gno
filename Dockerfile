@@ -95,6 +95,11 @@ RUN         --mount=type=cache,target=/go/pkg/mod/,id=pl-modcache \
 RUN         --mount=type=cache,target=/go/pkg/mod/,id=pl-modcache \
             --mount=type=cache,target=/root/.cache/go-build,id=pl-buildcache \
             go build -ldflags "-w -s -X github.com/gnolang/gno/tm2/pkg/version.Version=$(cat /gnoroot/build_version)" -o /gnoroot/build/portalloopd ./cmd
+## val-scenarios signer sidecar
+WORKDIR     /gnoroot
+RUN         --mount=type=cache,target=/go/pkg/mod/,id=valsignerd-modcache \
+            --mount=type=cache,target=/root/.cache/go-build,id=valsignerd-buildcache \
+            go build -ldflags "-w -s -X github.com/gnolang/gno/tm2/pkg/version.Version=$(cat /gnoroot/build_version)" -o /gnoroot/build/valsignerd ./misc/val-scenarios/cmd/valsignerd
 
 # Base image
 FROM        alpine:3 AS base
@@ -177,6 +182,12 @@ RUN         apk add --no-cache ca-certificates bash curl jq
 COPY        --from=build-misc /gnoroot/build/portalloopd /usr/bin/portalloopd
 ENTRYPOINT  ["/usr/bin/portalloopd"]
 CMD         ["serve"]
+
+# misc/val-scenarios controllable signer
+FROM        base AS valsignerd
+COPY        --from=build-misc /gnoroot/build/valsignerd /usr/bin/valsignerd
+EXPOSE      8080 26659
+ENTRYPOINT  ["/usr/bin/valsignerd"]
 
 # all, contains everything.
 FROM        base AS all

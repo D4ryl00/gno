@@ -13,11 +13,13 @@ REPO_ROOT="$(cd "${SCENARIO_LIB_DIR}/../../.." && pwd)"
 IMAGE_NAME="${IMAGE_NAME:-gnoland:local}"
 GNOKEY_IMAGE="${GNOKEY_IMAGE:-gnokey:local}"
 GNOGENESIS_IMAGE="${GNOGENESIS_IMAGE:-gnogenesis:local}"
+VALSIGNER_IMAGE="${VALSIGNER_IMAGE:-valsignerd:local}"
 GNO_ROOT="${GNO_ROOT:-${REPO_ROOT}}"
 WORK_ROOT="${WORK_ROOT:-/tmp/gno-val-tests}"
 CHAIN_ID="${CHAIN_ID:-dev}"
 TIMEOUT_COMMIT="${TIMEOUT_COMMIT:-1s}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
+REMOTE_SIGNER_REQUEST_TIMEOUT="${REMOTE_SIGNER_REQUEST_TIMEOUT:-30s}"
 TX_KEY_NAME="${TX_KEY_NAME:-scenario-tx}"
 TX_PASSWORD="${TX_PASSWORD:-test123456}"
 TX_MNEMONIC="${TX_MNEMONIC:-source bonus chronic canvas draft south burst lottery vacant surface solve popular case indicate oppose farm nothing bullet exhibit title speed wink action roast}"
@@ -32,6 +34,7 @@ TX_GAS_WANTED_SEND="${TX_GAS_WANTED_SEND:-2000000}"
 declare -a SCENARIO_NODES=()
 declare -a SCENARIO_VALIDATORS=()
 declare -a SCENARIO_SENTRIES=()
+declare -a SCENARIO_SIGNERS=()
 declare -A NODE_ROLE=()
 declare -A NODE_SERVICE=()
 declare -A NODE_MONIKER=()
@@ -43,6 +46,9 @@ declare -A NODE_ADDRESS=()
 declare -A NODE_PUBKEY=()
 declare -A NODE_DATA_DIR=()
 declare -A NODE_POWER=()
+declare -A NODE_CONTROLLABLE_SIGNER=()
+declare -A NODE_SIGNER_SERVICE=()
+declare -A NODE_CONTROL_PORT=()
 
 SCENARIO_NAME=""
 PROJECT_NAME=""
@@ -109,6 +115,7 @@ scenario_init() {
   SCENARIO_NODES=()
   SCENARIO_VALIDATORS=()
   SCENARIO_SENTRIES=()
+  SCENARIO_SIGNERS=()
   NODE_ROLE=()
   NODE_SERVICE=()
   NODE_MONIKER=()
@@ -120,6 +127,9 @@ scenario_init() {
   NODE_PUBKEY=()
   NODE_DATA_DIR=()
   NODE_POWER=()
+  NODE_CONTROLLABLE_SIGNER=()
+  NODE_SIGNER_SERVICE=()
+  NODE_CONTROL_PORT=()
 }
 
 next_rpc_port() {
@@ -158,6 +168,7 @@ gen_validator() {
   local sentry=""
   local pex="true"
   local power="1"
+  local controllable_signer="false"
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -178,6 +189,10 @@ gen_validator() {
         power="${2:?missing power value}"
         shift 2
         ;;
+      --controllable-signer)
+        controllable_signer="true"
+        shift
+        ;;
       *)
         die "unknown gen_validator option: $1"
         ;;
@@ -190,6 +205,12 @@ gen_validator() {
 
   register_node "$name" validator "$rpc_port" "$pex" "$sentry"
   NODE_POWER[$name]="$power"
+  NODE_CONTROLLABLE_SIGNER[$name]="$controllable_signer"
+  if [ "$controllable_signer" = "true" ]; then
+    NODE_SIGNER_SERVICE[$name]="${name}-signer"
+    NODE_CONTROL_PORT[$name]="$((rpc_port + 1))"
+    SCENARIO_SIGNERS+=("$name")
+  fi
 }
 
 gen_sentry() {
@@ -235,6 +256,12 @@ ensure_image_exists() {
   image_id="$(docker images -q "$GNOGENESIS_IMAGE" 2>/dev/null)"
   if [ -z "$image_id" ]; then
     die "docker image ${GNOGENESIS_IMAGE} not found; run \`make build-gnogenesis-image\` first"
+  fi
+  if [ "${#SCENARIO_SIGNERS[@]}" -gt 0 ]; then
+    image_id="$(docker images -q "$VALSIGNER_IMAGE" 2>/dev/null)"
+    if [ -z "$image_id" ]; then
+      die "docker image ${VALSIGNER_IMAGE} not found; run \`make build-valsigner-image\` first"
+    fi
   fi
 }
 
@@ -493,6 +520,10 @@ configure_nodes() {
       set_config_value "$node" p2p.seeds "$peers"
     fi
     set_config_value "$node" consensus.timeout_commit "$TIMEOUT_COMMIT"
+    if [ "${NODE_CONTROLLABLE_SIGNER[$node]:-false}" = "true" ]; then
+      set_config_value "$node" consensus.priv_validator.remote_signer.server_address "tcp://${NODE_SIGNER_SERVICE[$node]}:26659"
+      set_config_value "$node" consensus.priv_validator.remote_signer.request_timeout "$REMOTE_SIGNER_REQUEST_TIMEOUT"
+    fi
 
     if [ "${NODE_ROLE[$node]}" = "sentry" ]; then
       local private_ids
@@ -509,6 +540,26 @@ write_compose_file() {
     printf 'name: %s\n\n' "$PROJECT_NAME"
     printf 'services:\n'
     local node
+    local signer
+    for signer in "${SCENARIO_SIGNERS[@]}"; do
+      printf '  %s:\n' "${NODE_SIGNER_SERVICE[$signer]}"
+      printf '    image: "%s"\n' "$VALSIGNER_IMAGE"
+      printf '    command:\n'
+      printf '      - --key-file\n'
+      printf '      - /data/secrets/priv_validator_key.json\n'
+      printf '      - --listen-addr\n'
+      printf '      - :8080\n'
+      printf '      - --remote-signer-addr\n'
+      printf '      - tcp://0.0.0.0:26659\n'
+      printf '    volumes:\n'
+      printf '      - "%s:/data:ro"\n' "${NODE_DATA_DIR[$signer]}"
+      printf '    ports:\n'
+      printf '      - "%s:8080"\n' "${NODE_CONTROL_PORT[$signer]}"
+      printf '    networks:\n'
+      printf '      - chain\n'
+      printf '    stop_grace_period: 5s\n'
+    done
+
     for node in "${SCENARIO_NODES[@]}"; do
       printf '  %s:\n' "${NODE_SERVICE[$node]}"
       printf '    image: "%s"\n' "$IMAGE_NAME"
@@ -562,6 +613,7 @@ prepare_network() {
   collect_node_ids
   generate_genesis
   configure_nodes
+  write_inventory
   write_compose_file
   create_tx_key
 
@@ -571,6 +623,62 @@ prepare_network() {
 node_rpc_url() {
   local node="${1:?node required}"
   printf 'http://127.0.0.1:%s' "${NODE_RPC_PORT[$node]}"
+}
+
+node_control_url() {
+  local node="${1:?node required}"
+  [ "${NODE_CONTROLLABLE_SIGNER[$node]:-false}" = "true" ] || die "validator ${node} does not have a controllable signer"
+  printf 'http://127.0.0.1:%s' "${NODE_CONTROL_PORT[$node]}"
+}
+
+write_inventory() {
+  local inventory="${SCENARIO_DIR}/inventory.json"
+  local validators_json="[]"
+  local node
+
+  for node in "${SCENARIO_VALIDATORS[@]}"; do
+    local control_url="null"
+    if [ "${NODE_CONTROLLABLE_SIGNER[$node]:-false}" = "true" ]; then
+      control_url="\"$(node_control_url "$node")\""
+    fi
+
+    validators_json="$(
+      jq -cn \
+        --argjson current "$validators_json" \
+        --arg name "$node" \
+        --arg rpc "$(node_rpc_url "$node")" \
+        --arg service "${NODE_SERVICE[$node]}" \
+        --arg signer_service "${NODE_SIGNER_SERVICE[$node]:-}" \
+        --arg address "${NODE_ADDRESS[$node]}" \
+        --arg pubkey "${NODE_PUBKEY[$node]}" \
+        --argjson controllable "$( [ "${NODE_CONTROLLABLE_SIGNER[$node]:-false}" = "true" ] && printf 'true' || printf 'false' )" \
+        --argjson control_url "$control_url" \
+        '$current + [{
+          name: $name,
+          rpc_url: $rpc,
+          control_url: $control_url,
+          service: $service,
+          signer_service: $signer_service,
+          controllable_signer: $controllable,
+          address: $address,
+          pub_key: $pubkey
+        }]' \
+    )"
+  done
+
+  jq -n \
+    --arg scenario "$SCENARIO_NAME" \
+    --arg work_dir "$SCENARIO_DIR" \
+    --arg compose_file "$COMPOSE_FILE" \
+    --argjson validators "$validators_json" \
+    '{
+      scenario: $scenario,
+      work_dir: $work_dir,
+      compose_file: $compose_file,
+      validators: $validators
+    }' > "$inventory"
+
+  log "wrote inventory: ${inventory}"
 }
 
 wait_for_rpc() {
@@ -584,6 +692,19 @@ wait_for_rpc() {
     sleep 1
   done
   die "rpc for ${node} did not come up within ${timeout}s"
+}
+
+wait_for_control() {
+  local node="${1:?node required}"
+  local timeout="${2:-60}"
+  local i
+  for i in $(seq 1 "$timeout"); do
+    if curl -fsS "$(node_control_url "$node")/healthz" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  die "control api for ${node} did not come up within ${timeout}s"
 }
 
 _capture_node_logs() {
@@ -612,6 +733,17 @@ start_all_nodes() {
   [ "${#SCENARIO_NODES[@]}" -gt 0 ] || die "no nodes to start"
 
   local node
+
+  if [ "${#SCENARIO_SIGNERS[@]}" -gt 0 ]; then
+    local signer_service
+    for node in "${SCENARIO_SIGNERS[@]}"; do
+      signer_service="${NODE_SIGNER_SERVICE[$node]}"
+      compose up -d "$signer_service" >/dev/null
+      wait_for_control "$node" 90
+      _capture_node_logs "$signer_service"
+      log "started ${signer_service}"
+    done
+  fi
 
   # Start sentries first and wait for them before launching validators so
   # that the P2P gateway is ready when validators try to dial out.
@@ -717,6 +849,76 @@ wait_for_blocks() {
   local current
   current="$(node_height "$node")"
   wait_for_height "$node" "$((current + delta))" "$timeout"
+}
+
+signer_state() {
+  local node="${1:?node required}"
+  curl -fsS "$(node_control_url "$node")/state"
+}
+
+_signer_rule_request() {
+  local node="${1:?node required}"
+  local phase="${2:?phase required}"
+  local action="${3:?action required}"
+  local height="${4:-}"
+  local round="${5:-}"
+  local delay="${6:-}"
+
+  local -a jq_args=(
+    -n
+    --arg action "$action"
+    --arg height "$height"
+    --arg round "$round"
+    --arg delay "$delay"
+  )
+
+  jq "${jq_args[@]}" '
+    {
+      action: $action
+    }
+    + (if $height != "" then {height: ($height | tonumber)} else {} end)
+    + (if $round != "" then {round: ($round | tonumber)} else {} end)
+    + (if $delay != "" then {delay: $delay} else {} end)
+  '
+}
+
+signer_drop() {
+  local node="${1:?validator required}"
+  local phase="${2:?phase required}"
+  local height="${3:-}"
+  local round="${4:-}"
+  local payload
+  payload="$(_signer_rule_request "$node" "$phase" drop "$height" "$round" "")"
+  curl -fsS -X PUT -H 'Content-Type: application/json' --data "$payload" \
+    "$(node_control_url "$node")/rules/${phase}" >/dev/null
+  log "configured signer drop on ${node} phase=${phase} height=${height:-*} round=${round:-*}"
+}
+
+signer_delay() {
+  local node="${1:?validator required}"
+  local phase="${2:?phase required}"
+  local delay="${3:?delay required}"
+  local height="${4:-}"
+  local round="${5:-}"
+  local payload
+  payload="$(_signer_rule_request "$node" "$phase" delay "$height" "$round" "$delay")"
+  curl -fsS -X PUT -H 'Content-Type: application/json' --data "$payload" \
+    "$(node_control_url "$node")/rules/${phase}" >/dev/null
+  log "configured signer delay on ${node} phase=${phase} delay=${delay} height=${height:-*} round=${round:-*}"
+}
+
+signer_clear() {
+  local node="${1:?validator required}"
+  local phase="${2:-}"
+
+  if [ -n "$phase" ]; then
+    curl -fsS -X DELETE "$(node_control_url "$node")/rules/${phase}" >/dev/null
+    log "cleared signer rule on ${node} phase=${phase}"
+    return 0
+  fi
+
+  curl -fsS -X POST "$(node_control_url "$node")/reset" >/dev/null
+  log "cleared signer rules on ${node}"
 }
 
 # chain_advances succeeds if the chain produces at least <delta> new blocks on

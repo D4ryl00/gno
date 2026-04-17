@@ -5,6 +5,7 @@ This repo generates local Gnoland validator networks in Docker and runs scripted
 It is inspired by `../gno-val-test`, but the setup here is reusable and scenario-driven:
 
 - each validator or sentry runs in its own container
+- validators can optionally run with a controllable remote-signer sidecar
 - the network is generated from a small Bash DSL
 - scenarios can stop, restart, and reset nodes
 - scenarios can deploy realms and submit transactions with `gnokey`
@@ -20,23 +21,23 @@ It is inspired by `../gno-val-test`, but the setup here is reusable and scenario
 
 ## Build The Local Tooling Images
 
-The scripts expect local Docker images for `gnoland`, `gnokey`, and `gnogenesis`.
+The scripts expect local Docker images for `gnoland`, `gnokey`, `gnogenesis`, and `valsignerd`.
 
 ```bash
 make build-images
 ```
 
-By default the tags are `gnoland:local`, `gnokey:local`, and `gnogenesis:local`.
-Override them with `IMAGE=...`, `GNOKEY_IMAGE=...`, and `GNOGENESIS_IMAGE=...` if needed.
+By default the tags are `gnoland:local`, `gnokey:local`, `gnogenesis:local`, and `valsignerd:local`.
+Override them with `IMAGE=...`, `GNOKEY_IMAGE=...`, `GNOGENESIS_IMAGE=...`, and `VALSIGNER_IMAGE=...` if needed.
 
 To build images from a GitHub fork, set `GH_USER`. `GH_REPO` defaults to `gno` and `GH_BRANCH` defaults to `master`. Image tags are derived automatically as `<base>:<GH_USER>-<GH_BRANCH>` (slashes in the branch name become dashes), so multiple versions can coexist without overwriting each other.
 
 ```bash
 make build-images GH_USER=gnolang
-# → gnoland:gnolang-master, gnokey:gnolang-master, gnogenesis:gnolang-master
+# → gnoland:gnolang-master, gnokey:gnolang-master, gnogenesis:gnolang-master, valsignerd:gnolang-master
 
 make build-images GH_USER=gnolang GH_REPO=gno GH_BRANCH=feat/my-branch
-# → gnoland:gnolang-feat-my-branch, gnokey:gnolang-feat-my-branch, gnogenesis:gnolang-feat-my-branch
+# → gnoland:gnolang-feat-my-branch, gnokey:gnolang-feat-my-branch, gnogenesis:gnolang-feat-my-branch, valsignerd:gnolang-feat-my-branch
 ```
 
 The repository is cloned once to `/tmp/gno-remote-build` and reused across subsequent builds. To force a fresh clone, run `make fetch-remote` with the same variables.
@@ -80,13 +81,16 @@ KEEP_UP=1 ./scenarios/05_sentry_ip_rotation.sh
 - `10_five_validators_safe_reset_two_below_consensus.sh`: same as 08 but uses a safe reset
 - `11_weighted_voting_power_majority.sh`: 4 validators with voting power 10/1/1/1 — val1 alone holds >2/3 of total power, so stopping val2–4 must not halt the chain
 - `12_duplicate_addr_in_val_proposal.sh`: governance proposal with two entries for the same validator address (VotingPower=0 then VotingPower=5) — expected to end with the validator at power 5, but currently fails due to a bug (**tracking scenario**: should pass once the bug is fixed)
+- `14_five_validators_drop_proposals_with_signers.sh`: 5 validators with controllable signer sidecars — drop proposal signatures on all validators live, assert the chain halts at a fixed height, clear the rules, assert consensus resumes without restarting nodes
+- `15_four_validators_drop_prevotes_thresholds.sh`: 4 validators with controllable signer sidecars — drop prevotes on 1 validator and assert the chain keeps advancing, then drop prevotes on 3/4 validators and assert the chain halts
+- `16_four_validators_precommit_delays_thresholds.sh`: 4 validators with controllable signer sidecars — progressively delay precommits below and above `timeout_commit`, assert the chain still advances while a quorum can eventually form, then push two validators past the observation window and assert block production stalls
 
 ## Reusable Scenario API
 
 Scenarios source `lib/scenario.sh` and use a small set of helpers:
 
 - `scenario_init <name>`
-- `gen_validator <name> [--rpc-port <port>] [--sentry <sentry-name>]`
+- `gen_validator <name> [--rpc-port <port>] [--sentry <sentry-name>] [--controllable-signer]`
 - `gen_sentry <name> [--rpc-port <port>]`
 - `prepare_network`
 - `start_all_nodes`
@@ -98,10 +102,65 @@ Scenarios source `lib/scenario.sh` and use a small set of helpers:
 - `add_pkg <target-node> <pkgdir> <pkgpath>`
 - `call_realm <target-node> <pkgpath> <func> [args...]`
 - `do_transaction addpkg|call|run|send ...`
+- `signer_state <validator>`
+- `signer_drop <validator> proposal|prevote|precommit [height] [round]`
+- `signer_delay <validator> proposal|prevote|precommit <duration> [height] [round]`
+- `signer_clear <validator> [phase]`
 - `rotate_sentry_ip <sentry-name>`
 - `print_cluster_status`
 
 `wait_for_seconds` is used instead of `wait` to avoid colliding with Bash’s built-in `wait`.
+
+## Controllable Signers
+
+Pass `--controllable-signer` to `gen_validator` to launch a `valsignerd` sidecar for that validator. The validator itself still runs stock `gnoland`; only the signing path is redirected through the sidecar via the existing remote-signer configuration.
+
+Each controllable validator gets:
+
+- a sidecar service named `<validator>-signer`
+- an HTTP control API on host port `<validator-rpc-port + 1>`
+- a remote signer endpoint inside the compose network at `tcp://<validator>-signer:26659`
+
+`prepare_network` writes an inventory file at:
+
+```bash
+/tmp/gno-val-tests/<scenario-name>/inventory.json
+```
+
+That file lists validator RPC URLs and signer control URLs for use by an external cockpit.
+
+The sidecar currently supports live rules for:
+
+- drop proposal signatures
+- drop prevote signatures
+- drop precommit signatures
+- delay proposal / prevote / precommit signatures
+- optional height / round scoping
+
+This approach does not modify vote contents or proposal contents. It controls whether a validator signs, and when.
+
+Example live control commands against a running scenario:
+
+```bash
+# Inspect current signer state.
+curl -fsS http://127.0.0.1:26658/state | jq
+
+# Drop all precommits from val1.
+curl -fsS -X PUT http://127.0.0.1:26658/rules/precommit \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"drop"}'
+
+# Delay only round 0 prevotes at height 25 by 8 seconds.
+curl -fsS -X PUT http://127.0.0.1:26658/rules/prevote \
+  -H 'Content-Type: application/json' \
+  -d '{"action":"delay","delay":"8s","height":25,"round":0}'
+
+# Clear just the precommit rule.
+curl -fsS -X DELETE http://127.0.0.1:26658/rules/precommit
+
+# Clear all rules on that signer.
+curl -fsS -X POST http://127.0.0.1:26658/reset
+```
 
 ## Adding A New Scenario
 
