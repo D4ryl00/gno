@@ -133,7 +133,7 @@ scenario_init() {
 }
 
 next_rpc_port() {
-  printf '%s' "$((26657 + (${#SCENARIO_NODES[@]} * 100)))"
+  printf '0'
 }
 
 register_node() {
@@ -208,7 +208,7 @@ gen_validator() {
   NODE_CONTROLLABLE_SIGNER[$name]="$controllable_signer"
   if [ "$controllable_signer" = "true" ]; then
     NODE_SIGNER_SERVICE[$name]="${name}-signer"
-    NODE_CONTROL_PORT[$name]="$((rpc_port + 1))"
+    NODE_CONTROL_PORT[$name]="0"
     SCENARIO_SIGNERS+=("$name")
   fi
 }
@@ -375,12 +375,13 @@ generate_genesis() {
   local setup_tx="${genesis_work}/valset-init-tx.json"
   local setup_tx_jsonl="${genesis_work}/valset-init-tx.jsonl"
 
-  _gnokey_deployer \
+  printf '\n' | _gnokey_deployer \
     maketx run \
       --gas-wanted 100000000 \
       --gas-fee 1ugnot \
       --chainid "$CHAIN_ID" \
       --home /work/genesis-work/gnokey-home \
+      --insecure-password-stdin \
       "$deployer_name" \
       /work/genesis-work/valset-init.gno > "$setup_tx"
 
@@ -554,7 +555,11 @@ write_compose_file() {
       printf '    volumes:\n'
       printf '      - "%s:/data:ro"\n' "${NODE_DATA_DIR[$signer]}"
       printf '    ports:\n'
-      printf '      - "%s:8080"\n' "${NODE_CONTROL_PORT[$signer]}"
+      if [ "${NODE_CONTROL_PORT[$signer]:-0}" != "0" ]; then
+        printf '      - "127.0.0.1:%s:8080"\n' "${NODE_CONTROL_PORT[$signer]}"
+      else
+        printf '      - "127.0.0.1::8080"\n'
+      fi
       printf '    networks:\n'
       printf '      - chain\n'
       printf '    stop_grace_period: 5s\n'
@@ -579,7 +584,11 @@ write_compose_file() {
       printf '    volumes:\n'
       printf '      - "%s:/data"\n' "${NODE_DATA_DIR[$node]}"
       printf '    ports:\n'
-      printf '      - "%s:26657"\n' "${NODE_RPC_PORT[$node]}"
+      if [ "${NODE_RPC_PORT[$node]:-0}" != "0" ]; then
+        printf '      - "127.0.0.1:%s:26657"\n' "${NODE_RPC_PORT[$node]}"
+      else
+        printf '      - "127.0.0.1::26657"\n'
+      fi
       printf '    networks:\n'
       printf '      - chain\n'
       printf '    stop_grace_period: 5s\n'
@@ -613,7 +622,6 @@ prepare_network() {
   collect_node_ids
   generate_genesis
   configure_nodes
-  write_inventory
   write_compose_file
   create_tx_key
 
@@ -713,6 +721,24 @@ _capture_node_logs() {
   compose logs -f "$node" >> "${SCENARIO_DIR}/logs/${node}.log" 2>&1 &
 }
 
+_resolve_rpc_port() {
+  local node="${1:?node required}"
+  local cid port
+  cid="$(compose ps -q "${NODE_SERVICE[$node]}")"
+  port="$(docker port "$cid" 26657/tcp | awk -F: 'NR==1{print $NF}')"
+  [ -n "$port" ] || die "failed to resolve host RPC port for ${node}"
+  NODE_RPC_PORT[$node]="$port"
+}
+
+_resolve_control_port() {
+  local node="${1:?node required}"
+  local cid port
+  cid="$(compose ps -q "${NODE_SIGNER_SERVICE[$node]}")"
+  port="$(docker port "$cid" 8080/tcp | awk -F: 'NR==1{print $NF}')"
+  [ -n "$port" ] || die "failed to resolve host control port for ${node}"
+  NODE_CONTROL_PORT[$node]="$port"
+}
+
 start_node() {
   local node="${1:?node required}"
   compose up -d "$node" >/dev/null
@@ -739,6 +765,7 @@ start_all_nodes() {
     for node in "${SCENARIO_SIGNERS[@]}"; do
       signer_service="${NODE_SIGNER_SERVICE[$node]}"
       compose up -d "$signer_service" >/dev/null
+      _resolve_control_port "$node"
       wait_for_control "$node" 90
       _capture_node_logs "$signer_service"
       log "started ${signer_service}"
@@ -750,6 +777,7 @@ start_all_nodes() {
   if [ "${#SCENARIO_SENTRIES[@]}" -gt 0 ]; then
     compose up -d "${SCENARIO_SENTRIES[@]}" >/dev/null
     for node in "${SCENARIO_SENTRIES[@]}"; do
+      _resolve_rpc_port "$node"
       wait_for_rpc "$node" 90
       _capture_node_logs "$node"
     done
@@ -758,11 +786,14 @@ start_all_nodes() {
   if [ "${#SCENARIO_VALIDATORS[@]}" -gt 0 ]; then
     compose up -d "${SCENARIO_VALIDATORS[@]}" >/dev/null
     for node in "${SCENARIO_VALIDATORS[@]}"; do
+      _resolve_rpc_port "$node"
       wait_for_rpc "$node" 90
       _capture_node_logs "$node"
     done
   fi
 
+  write_compose_file
+  write_inventory
   log "started ${#SCENARIO_NODES[@]} node(s)"
 }
 
