@@ -37,7 +37,7 @@ ADVANCED_SCENARIO_SCRIPTS := $(sort $(wildcard advanced/*.sh))
 SCENARIO_SCRIPTS := $(BASICS_SCENARIO_SCRIPTS) $(ADVANCED_SCENARIO_SCRIPTS)
 
 # Extract the numeric prefix from a script path.
-# e.g. basics/02_four_validators_restart_staggered.sh -> 02
+# e.g. basics/02_three_validators_restart_staggered.sh -> 02
 scenario_num = $(word 1,$(subst _, ,$(notdir $(patsubst %.sh,%,$(1)))))
 
 # Generate scenario-NN / logs-NN / clean-NN rules for every discovered script.

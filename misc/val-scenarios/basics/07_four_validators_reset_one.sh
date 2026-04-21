@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 5 validators, stop/reset/restart only 1.
-# 4/5 remain during the reset (80% > 2/3 threshold) so the chain must keep
+# 4 validators, stop/reset/restart only 1.
+# 3/4 remain during the reset (75% > 2/3 threshold) so the chain must keep
 # advancing throughout the whole scenario.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -15,7 +15,6 @@ gen_validator val1
 gen_validator val2
 gen_validator val3
 gen_validator val4
-gen_validator val5
 
 prepare_network
 start_all_nodes
@@ -24,7 +23,7 @@ assert_chain_advances val1 120 5
 stop_validator val2
 reset_validator val2
 
-# 4/5 validators still running — chain must keep advancing.
+# 3/4 validators still running — chain must keep advancing.
 assert_chain_advances val1 60 2
 
 start_validator val2

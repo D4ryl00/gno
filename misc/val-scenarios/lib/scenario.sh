@@ -49,6 +49,7 @@ declare -A NODE_POWER=()
 declare -A NODE_CONTROLLABLE_SIGNER=()
 declare -A NODE_SIGNER_SERVICE=()
 declare -A NODE_CONTROL_PORT=()
+declare -A NODE_LOG_PID=()
 
 SCENARIO_NAME=""
 PROJECT_NAME=""
@@ -130,16 +131,13 @@ scenario_init() {
   NODE_CONTROLLABLE_SIGNER=()
   NODE_SIGNER_SERVICE=()
   NODE_CONTROL_PORT=()
-}
-
-next_rpc_port() {
-  printf '%s' "$((26657 + (${#SCENARIO_NODES[@]} * 100)))"
+  NODE_LOG_PID=()
 }
 
 register_node() {
   local name="${1:?node name required}"
   local role="${2:?role required}"
-  local rpc_port="${3:?rpc port required}"
+  local rpc_port="${3:-}"
   local pex="${4:?pex required}"
   local sentry="${5:-}"
 
@@ -199,16 +197,12 @@ gen_validator() {
     esac
   done
 
-  if [ -z "$rpc_port" ]; then
-    rpc_port="$(next_rpc_port)"
-  fi
-
   register_node "$name" validator "$rpc_port" "$pex" "$sentry"
   NODE_POWER[$name]="$power"
   NODE_CONTROLLABLE_SIGNER[$name]="$controllable_signer"
   if [ "$controllable_signer" = "true" ]; then
     NODE_SIGNER_SERVICE[$name]="${name}-signer"
-    NODE_CONTROL_PORT[$name]="$((rpc_port + 1))"
+    NODE_CONTROL_PORT[$name]=""
     SCENARIO_SIGNERS+=("$name")
   fi
 }
@@ -235,10 +229,6 @@ gen_sentry() {
         ;;
     esac
   done
-
-  if [ -z "$rpc_port" ]; then
-    rpc_port="$(next_rpc_port)"
-  fi
 
   register_node "$name" sentry "$rpc_port" "$pex" ""
 }
@@ -556,7 +546,11 @@ write_compose_file() {
       printf '    volumes:\n'
       printf '      - "%s:/data:ro"\n' "${NODE_DATA_DIR[$signer]}"
       printf '    ports:\n'
-      printf '      - "%s:8080"\n' "${NODE_CONTROL_PORT[$signer]}"
+      if [ -n "${NODE_CONTROL_PORT[$signer]:-}" ]; then
+        printf '      - "%s:8080"\n' "${NODE_CONTROL_PORT[$signer]}"
+      else
+        printf '      - "::8080"\n'
+      fi
       printf '    networks:\n'
       printf '      - chain\n'
       printf '    stop_grace_period: 5s\n'
@@ -581,7 +575,11 @@ write_compose_file() {
       printf '    volumes:\n'
       printf '      - "%s:/data"\n' "${NODE_DATA_DIR[$node]}"
       printf '    ports:\n'
-      printf '      - "%s:26657"\n' "${NODE_RPC_PORT[$node]}"
+      if [ -n "${NODE_RPC_PORT[$node]:-}" ]; then
+        printf '      - "%s:26657"\n' "${NODE_RPC_PORT[$node]}"
+      else
+        printf '      - "::26657"\n'
+      fi
       printf '    networks:\n'
       printf '      - chain\n'
       printf '    stop_grace_period: 5s\n'
@@ -615,7 +613,6 @@ prepare_network() {
   collect_node_ids
   generate_genesis
   configure_nodes
-  write_inventory
   write_compose_file
   create_tx_key
 
@@ -685,7 +682,7 @@ write_inventory() {
 
 wait_for_rpc() {
   local node="${1:?node required}"
-  local timeout="${2:-60}"
+  local timeout="${2:-120}"
   local i
   for i in $(seq 1 "$timeout"); do
     if curl -fsS "$(node_rpc_url "$node")/status" >/dev/null 2>&1; then
@@ -698,7 +695,7 @@ wait_for_rpc() {
 
 wait_for_control() {
   local node="${1:?node required}"
-  local timeout="${2:-60}"
+  local timeout="${2:-120}"
   local i
   for i in $(seq 1 "$timeout"); do
     if curl -fsS "$(node_control_url "$node")/healthz" >/dev/null 2>&1; then
@@ -711,14 +708,46 @@ wait_for_control() {
 
 _capture_node_logs() {
   local node="${1:?node required}"
+  # Kill any existing log-follower for this service so there is always exactly
+  # one writer per log file (prevents stale followers after container restarts).
+  if [ -n "${NODE_LOG_PID[$node]:-}" ]; then
+    kill "${NODE_LOG_PID[$node]}" 2>/dev/null || true
+  fi
   mkdir -p "${SCENARIO_DIR}/logs"
-  compose logs -f "$node" >> "${SCENARIO_DIR}/logs/${node}.log" 2>&1 &
+  # Inline docker compose instead of using the compose() wrapper: calling a
+  # bash function inside a background job is unreliable in non-interactive
+  # shells. Also guard disown with || true — in non-interactive bash job
+  # control is disabled so disown can return non-zero, which would trigger
+  # set -e and abort the caller.
+  docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" \
+    logs -f "$node" >> "${SCENARIO_DIR}/logs/${node}.log" 2>&1 &
+  local pid="$!"
+  NODE_LOG_PID[$node]="$pid"
+  disown "$pid" 2>/dev/null || true
+}
+
+_resolve_rpc_port() {
+  local node="${1:?node required}"
+  local host_port
+  host_port="$(compose port "${NODE_SERVICE[$node]}" 26657 2>/dev/null | grep -oE '[0-9]+$')"
+  [ -n "$host_port" ] || die "could not resolve host RPC port for ${node}"
+  NODE_RPC_PORT[$node]="$host_port"
+}
+
+_resolve_control_port() {
+  local node="${1:?node required}"
+  [ "${NODE_CONTROLLABLE_SIGNER[$node]:-false}" = "true" ] || return 0
+  local host_port
+  host_port="$(compose port "${NODE_SIGNER_SERVICE[$node]}" 8080 2>/dev/null | grep -oE '[0-9]+$')"
+  [ -n "$host_port" ] || die "could not resolve host control port for ${node}"
+  NODE_CONTROL_PORT[$node]="$host_port"
 }
 
 start_node() {
   local node="${1:?node required}"
   compose up -d "$node" >/dev/null
-  wait_for_rpc "$node" 90
+  _resolve_rpc_port "$node"
+  wait_for_rpc "$node" 120
   _capture_node_logs "$node"
   log "started ${node}"
 }
@@ -741,7 +770,8 @@ start_all_nodes() {
     for node in "${SCENARIO_SIGNERS[@]}"; do
       signer_service="${NODE_SIGNER_SERVICE[$node]}"
       compose up -d "$signer_service" >/dev/null
-      wait_for_control "$node" 90
+      _resolve_control_port "$node"
+      wait_for_control "$node" 120
       _capture_node_logs "$signer_service"
       log "started ${signer_service}"
     done
@@ -752,7 +782,8 @@ start_all_nodes() {
   if [ "${#SCENARIO_SENTRIES[@]}" -gt 0 ]; then
     compose up -d "${SCENARIO_SENTRIES[@]}" >/dev/null
     for node in "${SCENARIO_SENTRIES[@]}"; do
-      wait_for_rpc "$node" 90
+      _resolve_rpc_port "$node"
+      wait_for_rpc "$node" 120
       _capture_node_logs "$node"
     done
   fi
@@ -760,11 +791,14 @@ start_all_nodes() {
   if [ "${#SCENARIO_VALIDATORS[@]}" -gt 0 ]; then
     compose up -d "${SCENARIO_VALIDATORS[@]}" >/dev/null
     for node in "${SCENARIO_VALIDATORS[@]}"; do
-      wait_for_rpc "$node" 90
+      _resolve_rpc_port "$node"
+      wait_for_rpc "$node" 120
       _capture_node_logs "$node"
     done
   fi
 
+  write_compose_file
+  write_inventory
   log "started ${#SCENARIO_NODES[@]} node(s)"
 }
 
@@ -1204,7 +1238,8 @@ rotate_sentry_ip() {
 
   docker run -d --rm --entrypoint sh --name "$bumper" --network "$(docker_network_name)" "$IMAGE_NAME" -c 'sleep 300' >/dev/null
   compose up -d "$sentry" >/dev/null
-  wait_for_rpc "$sentry" 90
+  _resolve_rpc_port "$sentry"
+  wait_for_rpc "$sentry" 120
   new_ip="$(node_ip "$sentry" || true)"
 
   if [ -n "$old_ip" ] && [ "$old_ip" = "$new_ip" ]; then
@@ -1212,7 +1247,8 @@ rotate_sentry_ip() {
     compose rm -f "$sentry" >/dev/null
     docker run -d --rm --entrypoint sh --name "$bumper2" --network "$(docker_network_name)" "$IMAGE_NAME" -c 'sleep 300' >/dev/null
     compose up -d "$sentry" >/dev/null
-    wait_for_rpc "$sentry" 90
+    _resolve_rpc_port "$sentry"
+    wait_for_rpc "$sentry" 120
     new_ip="$(node_ip "$sentry" || true)"
   fi
 
