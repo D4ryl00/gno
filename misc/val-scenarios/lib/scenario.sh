@@ -380,6 +380,7 @@ generate_genesis() {
       --gas-wanted 100000000 \
       --gas-fee 1ugnot \
       --chainid "$CHAIN_ID" \
+      --broadcast=false \
       --home /work/genesis-work/gnokey-home \
       --insecure-password-stdin \
       "$deployer_name" \
