@@ -714,13 +714,19 @@ _capture_node_logs() {
     kill "${NODE_LOG_PID[$node]}" 2>/dev/null || true
   fi
   mkdir -p "${SCENARIO_DIR}/logs"
-  # Inline docker compose instead of using the compose() wrapper: calling a
-  # bash function inside a background job is unreliable in non-interactive
-  # shells. Also guard disown with || true — in non-interactive bash job
-  # control is disabled so disown can return non-zero, which would trigger
-  # set -e and abort the caller.
-  docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" \
-    logs -f "$node" >> "${SCENARIO_DIR}/logs/${node}.log" 2>&1 &
+  # Inline docker compose instead of the compose() wrapper: bash functions are
+  # unreliable inside background jobs in non-interactive shells.
+  # Pipe through awk to force per-line flushing: docker compose uses full
+  # buffering when stdout is not a TTY (i.e. any non-interactive invocation),
+  # so without fflush() nothing reaches the log file until the buffer fills.
+  # Guard disown with || true — without job control (non-interactive bash)
+  # disown can return non-zero which would trigger set -e.
+  # Redirect awk stderr to /dev/null so it does not inherit the parent shell's
+  # stderr fd — when invoked via runBashScript the parent stderr is a Go pipe,
+  # and leaving it open in the background process would cause CombinedOutput()
+  # to block indefinitely waiting for the write end to close.
+  docker compose -p "$PROJECT_NAME" -f "$COMPOSE_FILE" logs -f "$node" 2>&1 | \
+    awk '{ print; fflush() }' >> "${SCENARIO_DIR}/logs/${node}.log" 2>/dev/null &
   local pid="$!"
   NODE_LOG_PID[$node]="$pid"
   disown "$pid" 2>/dev/null || true

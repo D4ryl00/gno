@@ -153,6 +153,8 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: logs-${{ matrix.name }}
-          path: /tmp/gno-val-tests/${{ matrix.dir }}/logs/
+          path: |
+            /tmp/gno-val-tests/${{ matrix.dir }}/logs/
+            /tmp/gno-val-tests/${{ matrix.dir }}/genesis.json
           if-no-files-found: ignore
           retention-days: 1
