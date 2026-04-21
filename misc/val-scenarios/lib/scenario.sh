@@ -556,11 +556,7 @@ write_compose_file() {
       printf '    volumes:\n'
       printf '      - "%s:/data:ro"\n' "${NODE_DATA_DIR[$signer]}"
       printf '    ports:\n'
-      if [ "${NODE_CONTROL_PORT[$signer]:-0}" != "0" ]; then
-        printf '      - "127.0.0.1:%s:8080"\n' "${NODE_CONTROL_PORT[$signer]}"
-      else
-        printf '      - "127.0.0.1::8080"\n'
-      fi
+      printf '      - "127.0.0.1::8080"\n'
       printf '    networks:\n'
       printf '      - chain\n'
       printf '    stop_grace_period: 5s\n'
@@ -585,11 +581,7 @@ write_compose_file() {
       printf '    volumes:\n'
       printf '      - "%s:/data"\n' "${NODE_DATA_DIR[$node]}"
       printf '    ports:\n'
-      if [ "${NODE_RPC_PORT[$node]:-0}" != "0" ]; then
-        printf '      - "127.0.0.1:%s:26657"\n' "${NODE_RPC_PORT[$node]}"
-      else
-        printf '      - "127.0.0.1::26657"\n'
-      fi
+      printf '      - "127.0.0.1::26657"\n'
       printf '    networks:\n'
       printf '      - chain\n'
       printf '    stop_grace_period: 5s\n'
@@ -743,6 +735,7 @@ _resolve_control_port() {
 start_node() {
   local node="${1:?node required}"
   compose up -d "$node" >/dev/null
+  _resolve_rpc_port "$node"
   wait_for_rpc "$node" 90
   _capture_node_logs "$node"
   log "started ${node}"
@@ -793,7 +786,6 @@ start_all_nodes() {
     done
   fi
 
-  write_compose_file
   write_inventory
   log "started ${#SCENARIO_NODES[@]} node(s)"
 }
@@ -1234,6 +1226,7 @@ rotate_sentry_ip() {
 
   docker run -d --rm --entrypoint sh --name "$bumper" --network "$(docker_network_name)" "$IMAGE_NAME" -c 'sleep 300' >/dev/null
   compose up -d "$sentry" >/dev/null
+  _resolve_rpc_port "$sentry"
   wait_for_rpc "$sentry" 90
   new_ip="$(node_ip "$sentry" || true)"
 
@@ -1242,6 +1235,7 @@ rotate_sentry_ip() {
     compose rm -f "$sentry" >/dev/null
     docker run -d --rm --entrypoint sh --name "$bumper2" --network "$(docker_network_name)" "$IMAGE_NAME" -c 'sleep 300' >/dev/null
     compose up -d "$sentry" >/dev/null
+    _resolve_rpc_port "$sentry"
     wait_for_rpc "$sentry" 90
     new_ip="$(node_ip "$sentry" || true)"
   fi
