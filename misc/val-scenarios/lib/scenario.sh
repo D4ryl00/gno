@@ -684,7 +684,7 @@ write_inventory() {
 
 wait_for_rpc() {
   local node="${1:?node required}"
-  local timeout="${2:-60}"
+  local timeout="${2:-120}"
   local i
   for i in $(seq 1 "$timeout"); do
     if curl -fsS "$(node_rpc_url "$node")/status" >/dev/null 2>&1; then
@@ -697,7 +697,7 @@ wait_for_rpc() {
 
 wait_for_control() {
   local node="${1:?node required}"
-  local timeout="${2:-60}"
+  local timeout="${2:-120}"
   local i
   for i in $(seq 1 "$timeout"); do
     if curl -fsS "$(node_control_url "$node")/healthz" >/dev/null 2>&1; then
@@ -736,7 +736,7 @@ start_node() {
   local node="${1:?node required}"
   compose up -d "$node" >/dev/null
   _resolve_rpc_port "$node"
-  wait_for_rpc "$node" 90
+  wait_for_rpc "$node" 120
   _capture_node_logs "$node"
   log "started ${node}"
 }
@@ -760,7 +760,7 @@ start_all_nodes() {
       signer_service="${NODE_SIGNER_SERVICE[$node]}"
       compose up -d "$signer_service" >/dev/null
       _resolve_control_port "$node"
-      wait_for_control "$node" 90
+      wait_for_control "$node" 120
       _capture_node_logs "$signer_service"
       log "started ${signer_service}"
     done
@@ -772,7 +772,7 @@ start_all_nodes() {
     compose up -d "${SCENARIO_SENTRIES[@]}" >/dev/null
     for node in "${SCENARIO_SENTRIES[@]}"; do
       _resolve_rpc_port "$node"
-      wait_for_rpc "$node" 90
+      wait_for_rpc "$node" 120
       _capture_node_logs "$node"
     done
   fi
@@ -781,7 +781,7 @@ start_all_nodes() {
     compose up -d "${SCENARIO_VALIDATORS[@]}" >/dev/null
     for node in "${SCENARIO_VALIDATORS[@]}"; do
       _resolve_rpc_port "$node"
-      wait_for_rpc "$node" 90
+      wait_for_rpc "$node" 120
       _capture_node_logs "$node"
     done
   fi
