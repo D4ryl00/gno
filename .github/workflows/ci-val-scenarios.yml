@@ -52,7 +52,7 @@ jobs:
         id: list
         run: |
           matrix=$(find misc/val-scenarios/basics -maxdepth 1 -name '*.sh' | sort | xargs -n1 basename | \
-            jq -R '{"script": ., "name": ("scenario-" + (.[:-3] | gsub("_"; "-")))}' | \
+            jq -R '{"script": ., "name": ("scenario-" + (.[:-3] | gsub("_"; "-"))), "dir": ("scenario-" + split("_")[0])}' | \
             jq -sc '.')
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
@@ -153,6 +153,6 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: logs-${{ matrix.name }}
-          path: /tmp/gno-val-tests/${{ matrix.name }}/logs/
+          path: /tmp/gno-val-tests/${{ matrix.dir }}/logs/
           if-no-files-found: ignore
           retention-days: 1
