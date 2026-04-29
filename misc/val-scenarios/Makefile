@@ -1,11 +1,12 @@
 WORK_ROOT         ?= /tmp/gno-val-tests
 NODE              ?=
+LOCAL_GNO_ROOT    := $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
 
 # Remote fork support: set GH_USER to build images from a GitHub fork.
 # GH_REPO defaults to "gno" and GH_BRANCH defaults to "master".
 # e.g. make build-images GH_USER=gnolang
 #      make build-images GH_USER=gnolang GH_REPO=gno GH_BRANCH=feat/my-branch
-# Image tags are derived automatically: gnoland:<GH_USER>-<GH_BRANCH>
+# Image tags are derived automatically: gno-val-scenario-core:<GH_USER>-<GH_BRANCH>
 # (slashes in the branch name are replaced with dashes).
 GH_USER           ?=
 GH_REPO           ?= gno
@@ -16,28 +17,34 @@ _FETCH_STAMP      := $(_REMOTE_GNO_ROOT)/.fetched
 
 ifneq ($(GH_USER),)
 _IMAGE_TAG        := $(GH_USER)-$(subst /,-,$(GH_BRANCH))
-IMAGE             ?= gnoland:$(_IMAGE_TAG)
-GNOKEY_IMAGE      ?= gnokey:$(_IMAGE_TAG)
+IMAGE             ?= gno-val-scenario-core:$(_IMAGE_TAG)
+GNOKEY_IMAGE      ?= $(IMAGE)
 GNOGENESIS_IMAGE  ?= gnogenesis:$(_IMAGE_TAG)
 VALSIGNER_IMAGE   ?= valsignerd:$(_IMAGE_TAG)
 GNO_ROOT          := $(_REMOTE_GNO_ROOT)
+CORE_GNO_ROOT     ?= $(GNO_ROOT)
+GNOGENESIS_GNO_ROOT ?= $(GNO_ROOT)
+VALSIGNER_GNO_ROOT ?= $(GNO_ROOT)
 _FETCH_PREREQ     := $(_FETCH_STAMP)
 else
-IMAGE             ?= gnoland:local
-GNOKEY_IMAGE      ?= gnokey:local
+IMAGE             ?= gno-val-scenario-core:local
+GNOKEY_IMAGE      ?= $(IMAGE)
 GNOGENESIS_IMAGE  ?= gnogenesis:local
 VALSIGNER_IMAGE   ?= valsignerd:local
-GNO_ROOT          ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../..)
+GNO_ROOT          ?= $(LOCAL_GNO_ROOT)
+CORE_GNO_ROOT     ?= $(GNO_ROOT)
+GNOGENESIS_GNO_ROOT ?= $(GNO_ROOT)
+VALSIGNER_GNO_ROOT ?= $(GNO_ROOT)
 _FETCH_PREREQ     :=
 endif
 
-# Auto-discover scenario scripts by tier, ordered by filename.
-BASICS_SCENARIO_SCRIPTS := $(sort $(wildcard basics/*.sh))
-ADVANCED_SCENARIO_SCRIPTS := $(sort $(wildcard advanced/*.sh))
-SCENARIO_SCRIPTS := $(BASICS_SCENARIO_SCRIPTS) $(ADVANCED_SCENARIO_SCRIPTS)
+# Auto-discover scenario scripts, ordered by filename.
+SCENARIO_SCRIPTS := $(sort $(wildcard scenarios/*.sh))
+CI_SCENARIO_SCRIPTS := $(shell grep -l '^SCENARIO_CI=true$$' $(SCENARIO_SCRIPTS) 2>/dev/null | sort)
+LOCAL_ONLY_SCENARIO_SCRIPTS := $(shell grep -l '^SCENARIO_CI=false$$' $(SCENARIO_SCRIPTS) 2>/dev/null | sort)
 
 # Extract the numeric prefix from a script path.
-# e.g. basics/02_three_validators_restart_staggered.sh -> 02
+# e.g. scenarios/02_three_validators_restart_staggered.sh -> 02
 scenario_num = $(word 1,$(subst _, ,$(notdir $(patsubst %.sh,%,$(1)))))
 
 # Generate scenario-NN / logs-NN / clean-NN rules for every discovered script.
@@ -59,19 +66,19 @@ endef
 $(foreach s,$(SCENARIO_SCRIPTS),$(eval $(call SCENARIO_RULES,$(s))))
 
 # Scenario target groups.
-BASICS_SCENARIO_TARGETS := $(foreach s,$(BASICS_SCENARIO_SCRIPTS),scenario-$(call scenario_num,$(s)))
-ADVANCED_SCENARIO_TARGETS := $(foreach s,$(ADVANCED_SCENARIO_SCRIPTS),scenario-$(call scenario_num,$(s)))
-SCENARIO_TARGETS := $(BASICS_SCENARIO_TARGETS) $(ADVANCED_SCENARIO_TARGETS)
+SCENARIO_TARGETS := $(foreach s,$(SCENARIO_SCRIPTS),scenario-$(call scenario_num,$(s)))
+CI_SCENARIO_TARGETS := $(foreach s,$(CI_SCENARIO_SCRIPTS),scenario-$(call scenario_num,$(s)))
+LOCAL_ONLY_SCENARIO_TARGETS := $(foreach s,$(LOCAL_ONLY_SCENARIO_SCRIPTS),scenario-$(call scenario_num,$(s)))
 
-.PHONY: test test-basics test-advanced test-all basics advanced build-gnoland-image build-gnokey-image build-gnogenesis-image build-valsigner-image build-images fetch-remote clone-gno clean status
+.PHONY: test test-ci ci test-local local-only test-all test-basics basics test-advanced advanced build-core-image build-gnoland-image build-gnokey-image build-gnogenesis-image build-valsigner-image build-images fetch-remote clone-gno clean status
 
-# Run the CI/basic scenarios in order, stopping on the first failure.
-test: test-basics
+# Run the CI scenarios in order, stopping on the first failure.
+test: test-ci
 
-test-basics basics: $(BASICS_SCENARIO_TARGETS)
+test-ci ci test-basics basics: $(CI_SCENARIO_TARGETS)
 
-# Run the locally-oriented advanced scenarios in order.
-test-advanced advanced: $(ADVANCED_SCENARIO_TARGETS)
+# Run the locally-oriented scenarios in order.
+test-local local-only test-advanced advanced: $(LOCAL_ONLY_SCENARIO_TARGETS)
 
 # Run every scenario in order.
 test-all: $(SCENARIO_TARGETS)
@@ -96,19 +103,18 @@ clone-gno:
 		git clone https://github.com/gnolang/gno.git $(GNO_ROOT); \
 	fi
 
-build-gnoland-image: $(_FETCH_PREREQ)
-	docker build -t $(IMAGE) -f $(GNO_ROOT)/Dockerfile --target gnoland $(GNO_ROOT)
+build-core-image: $(_FETCH_PREREQ)
+	docker build -t $(IMAGE) -f $(CORE_GNO_ROOT)/Dockerfile --target all $(CORE_GNO_ROOT)
 
-build-gnokey-image: $(_FETCH_PREREQ)
-	docker build -t $(GNOKEY_IMAGE) -f $(GNO_ROOT)/Dockerfile --target gnokey $(GNO_ROOT)
+build-gnoland-image build-gnokey-image: build-core-image
 
 build-gnogenesis-image: $(_FETCH_PREREQ)
-	docker build -t $(GNOGENESIS_IMAGE) -f $(GNO_ROOT)/Dockerfile --target gnocontribs $(GNO_ROOT)
+	docker build -t $(GNOGENESIS_IMAGE) -f $(GNOGENESIS_GNO_ROOT)/Dockerfile --target gnocontribs $(GNOGENESIS_GNO_ROOT)
 
 build-valsigner-image: $(_FETCH_PREREQ)
-	docker build -t $(VALSIGNER_IMAGE) -f $(GNO_ROOT)/Dockerfile --target valsignerd $(GNO_ROOT)
+	docker build -t $(VALSIGNER_IMAGE) -f $(VALSIGNER_GNO_ROOT)/misc/val-scenarios/Dockerfile --target valsignerd $(VALSIGNER_GNO_ROOT)
 
-build-images: build-gnoland-image build-gnokey-image build-gnogenesis-image build-valsigner-image
+build-images: build-core-image build-gnogenesis-image build-valsigner-image
 
 clean:
 	rm -rf $(WORK_ROOT)

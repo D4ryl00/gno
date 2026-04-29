@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCENARIO_CI=false
+
 # Keep the commit timeout fixed so the delay thresholds below stay meaningful.
 TIMEOUT_COMMIT="1s"
 

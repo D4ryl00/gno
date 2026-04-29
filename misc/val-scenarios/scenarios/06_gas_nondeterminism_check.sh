@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCENARIO_CI=true
+
 # Check whether a single image binary is affected by the gas non-determinism
 # bug fixed by PR #5400.
 #

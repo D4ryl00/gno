@@ -10,8 +10,8 @@ SCENARIO_SELF="${BASH_SOURCE[0]}"
 SCENARIO_LIB_DIR="$(cd "$(dirname "${SCENARIO_SELF}")" && pwd)"
 REPO_ROOT="$(cd "${SCENARIO_LIB_DIR}/../../.." && pwd)"
 
-IMAGE_NAME="${IMAGE_NAME:-gnoland:local}"
-GNOKEY_IMAGE="${GNOKEY_IMAGE:-gnokey:local}"
+IMAGE_NAME="${IMAGE_NAME:-gno-val-scenario-core:local}"
+GNOKEY_IMAGE="${GNOKEY_IMAGE:-${IMAGE_NAME}}"
 GNOGENESIS_IMAGE="${GNOGENESIS_IMAGE:-gnogenesis:local}"
 VALSIGNER_IMAGE="${VALSIGNER_IMAGE:-valsignerd:local}"
 GNO_ROOT="${GNO_ROOT:-${REPO_ROOT}}"
@@ -33,6 +33,7 @@ TX_GAS_WANTED_SEND="${TX_GAS_WANTED_SEND:-2000000}"
 
 declare -a SCENARIO_NODES=()
 declare -a SCENARIO_VALIDATORS=()
+declare -a SCENARIO_GENESIS_VALIDATORS=()
 declare -a SCENARIO_SENTRIES=()
 declare -a SCENARIO_SIGNERS=()
 declare -A NODE_ROLE=()
@@ -115,6 +116,7 @@ scenario_init() {
 
   SCENARIO_NODES=()
   SCENARIO_VALIDATORS=()
+  SCENARIO_GENESIS_VALIDATORS=()
   SCENARIO_SENTRIES=()
   SCENARIO_SIGNERS=()
   NODE_ROLE=()
@@ -140,6 +142,7 @@ register_node() {
   local rpc_port="${3:-}"
   local pex="${4:?pex required}"
   local sentry="${5:-}"
+  local in_genesis="${6:-true}"
 
   [ -z "${NODE_ROLE[$name]:-}" ] || die "node ${name} already exists"
 
@@ -152,7 +155,12 @@ register_node() {
   NODE_SENTRY[$name]="$sentry"
 
   case "$role" in
-    validator) SCENARIO_VALIDATORS+=("$name") ;;
+    validator)
+      SCENARIO_VALIDATORS+=("$name")
+      if [ "$in_genesis" = "true" ]; then
+        SCENARIO_GENESIS_VALIDATORS+=("$name")
+      fi
+      ;;
     sentry) SCENARIO_SENTRIES+=("$name") ;;
     *) die "unsupported node role ${role}" ;;
   esac
@@ -167,6 +175,7 @@ gen_validator() {
   local pex="true"
   local power="1"
   local controllable_signer="false"
+  local in_genesis="true"
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -191,13 +200,17 @@ gen_validator() {
         controllable_signer="true"
         shift
         ;;
+      --not-in-genesis)
+        in_genesis="false"
+        shift
+        ;;
       *)
         die "unknown gen_validator option: $1"
         ;;
     esac
   done
 
-  register_node "$name" validator "$rpc_port" "$pex" "$sentry"
+  register_node "$name" validator "$rpc_port" "$pex" "$sentry" "$in_genesis"
   NODE_POWER[$name]="$power"
   NODE_CONTROLLABLE_SIGNER[$name]="$controllable_signer"
   if [ "$controllable_signer" = "true" ]; then
@@ -237,20 +250,20 @@ ensure_image_exists() {
   local image_id
   image_id="$(docker images -q "$IMAGE_NAME" 2>/dev/null)"
   if [ -z "$image_id" ]; then
-    die "docker image ${IMAGE_NAME} not found; run \`make build-gnoland-image\` first"
+    die "docker image ${IMAGE_NAME} not found; run \`make build-images\` first"
   fi
   image_id="$(docker images -q "$GNOKEY_IMAGE" 2>/dev/null)"
   if [ -z "$image_id" ]; then
-    die "docker image ${GNOKEY_IMAGE} not found; run \`make build-gnokey-image\` first"
+    die "docker image ${GNOKEY_IMAGE} not found; run \`make build-images\` first"
   fi
   image_id="$(docker images -q "$GNOGENESIS_IMAGE" 2>/dev/null)"
   if [ -z "$image_id" ]; then
-    die "docker image ${GNOGENESIS_IMAGE} not found; run \`make build-gnogenesis-image\` first"
+    die "docker image ${GNOGENESIS_IMAGE} not found; run \`make build-images\` first"
   fi
   if [ "${#SCENARIO_SIGNERS[@]}" -gt 0 ]; then
     image_id="$(docker images -q "$VALSIGNER_IMAGE" 2>/dev/null)"
     if [ -z "$image_id" ]; then
-      die "docker image ${VALSIGNER_IMAGE} not found; run \`make build-valsigner-image\` first"
+      die "docker image ${VALSIGNER_IMAGE} not found; run \`make build-images\` first"
     fi
   fi
 }
@@ -260,7 +273,7 @@ compose() {
 }
 
 run_in_image() {
-  docker run --rm "$@"
+  docker run --rm --entrypoint /usr/bin/gnoland "$@"
 }
 
 init_node_dirs() {
@@ -286,10 +299,9 @@ collect_node_ids() {
 
 # _gnogenesis runs a gnogenesis command with the scenario genesis and GNO_ROOT mounted.
 # Callers must include --genesis-path /work/genesis.json after the subcommand name.
-# Uses --entrypoint gnogenesis because gnocontribs image ENTRYPOINT is /bin/sh -c.
 _gnogenesis() {
   docker run --rm \
-    --entrypoint gnogenesis \
+    --entrypoint /usr/bin/gnogenesis \
     -v "${SCENARIO_DIR}:/work" \
     -v "${GNO_ROOT}:/gnoroot:ro" \
     "$GNOGENESIS_IMAGE" \
@@ -299,13 +311,14 @@ _gnogenesis() {
 # _gnokey_deployer runs a gnokey command with the genesis deployer key home mounted.
 _gnokey_deployer() {
   docker run -i --rm \
+    --entrypoint /usr/bin/gnokey \
     -v "${SCENARIO_DIR}:/work" \
     "$GNOKEY_IMAGE" \
     "$@"
 }
 
 generate_genesis() {
-  [ "${#SCENARIO_VALIDATORS[@]}" -gt 0 ] || die "at least one validator is required"
+  [ "${#SCENARIO_GENESIS_VALIDATORS[@]}" -gt 0 ] || die "at least one genesis validator is required"
   [ -d "${GNO_ROOT}/examples" ] || die "GNO_ROOT examples not found at ${GNO_ROOT}/examples; run 'make clone-gno' or set GNO_ROOT"
 
   local genesis_work="${SCENARIO_DIR}/genesis-work"
@@ -319,13 +332,14 @@ generate_genesis() {
   log "creating genesis deployer key"
   printf '%s\n\n' "$deployer_mnemonic" | \
     docker run -i --rm \
+      --entrypoint /usr/bin/gnokey \
       -v "${gnokey_home}:/keys" \
       "$GNOKEY_IMAGE" \
       add --recover "$deployer_name" --home /keys --insecure-password-stdin >/dev/null
 
   log "generating empty genesis"
   docker run --rm \
-    --entrypoint gnogenesis \
+    --entrypoint /usr/bin/gnogenesis \
     -v "${genesis_work}:/work" \
     "$GNOGENESIS_IMAGE" \
     generate \
@@ -339,7 +353,7 @@ generate_genesis() {
   log "adding packages from GNO_ROOT"
   printf '\n' | \
     docker run -i --rm \
-      --entrypoint gnogenesis \
+      --entrypoint /usr/bin/gnogenesis \
       -v "${SCENARIO_DIR}:/work" \
       -v "${GNO_ROOT}:/gnoroot:ro" \
       -v "${gnokey_home}:/keys" \
@@ -354,7 +368,7 @@ generate_genesis() {
   local valset_file="${genesis_work}/valset-init.gno"
   local valset_entries=""
   local node
-  for node in "${SCENARIO_VALIDATORS[@]}"; do
+  for node in "${SCENARIO_GENESIS_VALIDATORS[@]}"; do
     valset_entries+="$(printf '\t\t\t\t{Address: address("%s"), PubKey: "%s", VotingPower: %s},\n' \
       "${NODE_ADDRESS[$node]}" "${NODE_PUBKEY[$node]}" "${NODE_POWER[$node]:-1}")"
   done
@@ -390,8 +404,8 @@ generate_genesis() {
 
   _gnogenesis txs add sheets --genesis-path /work/genesis.json /work/genesis-work/valset-init-tx.jsonl >/dev/null
 
-  log "adding ${#SCENARIO_VALIDATORS[@]} validators to consensus layer"
-  for node in "${SCENARIO_VALIDATORS[@]}"; do
+  log "adding ${#SCENARIO_GENESIS_VALIDATORS[@]} validators to consensus layer"
+  for node in "${SCENARIO_GENESIS_VALIDATORS[@]}"; do
     _gnogenesis validator add \
       --genesis-path /work/genesis.json \
       --name "$node" \
@@ -559,6 +573,8 @@ write_compose_file() {
     for node in "${SCENARIO_NODES[@]}"; do
       printf '  %s:\n' "${NODE_SERVICE[$node]}"
       printf '    image: "%s"\n' "$IMAGE_NAME"
+      printf '    entrypoint:\n'
+      printf '      - /usr/bin/gnoland\n'
       printf '    command:\n'
       printf '      - start\n'
       printf '      - -skip-genesis-sig-verification\n'
@@ -596,7 +612,7 @@ create_tx_key() {
   fi
 
   printf '%s\n%s\n%s\n' "$TX_MNEMONIC" "$TX_PASSWORD" "$TX_PASSWORD" | \
-    docker run -i --rm -v "${KEY_HOME}:/keys" "$GNOKEY_IMAGE" \
+    docker run -i --rm --entrypoint /usr/bin/gnokey -v "${KEY_HOME}:/keys" "$GNOKEY_IMAGE" \
       add "$TX_KEY_NAME" --home /keys --recover --quiet --insecure-password-stdin >/dev/null
 }
 
@@ -1028,6 +1044,7 @@ gnokey_tx_with_password() {
   done
   printf '%s\n' "$TX_PASSWORD" | \
     docker run -i --rm \
+      --entrypoint /usr/bin/gnokey \
       --network "$(docker_network_name)" \
       -v "${KEY_HOME}:/keys" \
       "${extra_docker_args[@]}" \
@@ -1201,7 +1218,7 @@ query_render() {
   local target_node="${1:?target node required}"
   local expr="${2:?render expression required}"
 
-  docker run --rm --network "$(docker_network_name)" "$GNOKEY_IMAGE" \
+  docker run --rm --entrypoint /usr/bin/gnokey --network "$(docker_network_name)" "$GNOKEY_IMAGE" \
     query vm/qrender --data "$expr" --remote "${NODE_SERVICE[$target_node]}:26657"
 }
 

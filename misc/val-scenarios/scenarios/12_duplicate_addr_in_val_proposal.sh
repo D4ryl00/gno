@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCENARIO_CI=true
+
 # Scenario 12: governance proposal with a duplicate validator address.
 #
 # A single NewPropRequest contains two entries for the same validator address:

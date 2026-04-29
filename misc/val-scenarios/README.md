@@ -19,30 +19,45 @@ It is inspired by `../gno-val-test`, but the setup here is reusable and scenario
 - `curl`
 - `bash` (4+)
 
-## Build The Local Tooling Images
+## Build The Local Images
 
-The scripts expect local Docker images for `gnoland`, `gnokey`, `gnogenesis`, and `valsignerd`.
+The scripts expect three local Docker images:
+
+- `gno-val-scenario-core:local`: built from the root `Dockerfile` `all` target; contains `gnoland` and `gnokey`
+- `gnogenesis:local`: built from the root `Dockerfile` `gnocontribs` target
+- `valsignerd:local`: built from `misc/val-scenarios/Dockerfile`; contains only the scenario signer sidecar
 
 ```bash
 make build-images
 ```
 
-By default the tags are `gnoland:local`, `gnokey:local`, `gnogenesis:local`, and `valsignerd:local`.
-Override them with `IMAGE=...`, `GNOKEY_IMAGE=...`, `GNOGENESIS_IMAGE=...`, and `VALSIGNER_IMAGE=...` if needed.
+Override image tags with `IMAGE=...`, `GNOKEY_IMAGE=...`, `GNOGENESIS_IMAGE=...`, and `VALSIGNER_IMAGE=...` if needed. By default, `GNOKEY_IMAGE` is the same image as `IMAGE`.
 
 To build images from a GitHub fork, set `GH_USER`. `GH_REPO` defaults to `gno` and `GH_BRANCH` defaults to `master`. Image tags are derived automatically as `<base>:<GH_USER>-<GH_BRANCH>` (slashes in the branch name become dashes), so multiple versions can coexist without overwriting each other.
 
 ```bash
 make build-images GH_USER=gnolang
-# → gnoland:gnolang-master, gnokey:gnolang-master, gnogenesis:gnolang-master, valsignerd:gnolang-master
+# -> gno-val-scenario-core:gnolang-master, gnogenesis:gnolang-master, valsignerd:gnolang-master
 
 make build-images GH_USER=gnolang GH_REPO=gno GH_BRANCH=feat/my-branch
-# → gnoland:gnolang-feat-my-branch, gnokey:gnolang-feat-my-branch, gnogenesis:gnolang-feat-my-branch, valsignerd:gnolang-feat-my-branch
+# -> gno-val-scenario-core:gnolang-feat-my-branch, gnogenesis:gnolang-feat-my-branch, valsignerd:gnolang-feat-my-branch
+```
+
+When `GH_USER` is set, all images build from the fetched remote branch by default. You can override each source checkout independently:
+
+- `CORE_GNO_ROOT`: source for the core image (`gnoland` and `gnokey`)
+- `GNOGENESIS_GNO_ROOT`: source for the `gnogenesis` image
+- `VALSIGNER_GNO_ROOT`: source for the `valsignerd` image
+
+This is useful when testing a branch that does not contain every scenario tool. For example, build the chain binaries from a remote branch but use the local `valsignerd`:
+
+```bash
+GH_USER=moul GH_BRANCH=feat/valset-params-v3 VALSIGNER_GNO_ROOT=$PWD make build-images
 ```
 
 The repository is cloned once to `/tmp/gno-remote-build` and reused across subsequent builds. To force a fresh clone, run `make fetch-remote` with the same variables.
 
-To run a scenario against a previously built fork image, pass the matching tag:
+To run a scenario against previously built fork images, pass the matching tag variables through the Makefile:
 
 ```bash
 make scenario-12 GH_USER=gnolang GH_BRANCH=feat/my-branch
@@ -51,14 +66,15 @@ make scenario-12 GH_USER=gnolang GH_BRANCH=feat/my-branch
 ## Run A Scenario
 
 ```bash
-make test              # run the CI/basic scenarios
-make test-advanced     # run the advanced local-only scenarios
-make test-all          # run both tiers
+make test          # run scenarios marked SCENARIO_CI=true
+make test-local    # run scenarios marked SCENARIO_CI=false
+make test-all      # run all scenarios
 make scenario-01
 make scenario-04
 ```
 
-`make scenario-NN` still works for any individual scenario regardless of folder.
+`make test-basics` / `make basics` are aliases for `make test-ci`.
+`make test-advanced` / `make advanced` are aliases for `make test-local`.
 
 Each run writes generated node data, keys, genesis, and compose output under:
 
@@ -69,44 +85,45 @@ Each run writes generated node data, keys, genesis, and compose output under:
 By default the scenario tears containers down on exit but keeps the generated data. To keep the network running after the script exits:
 
 ```bash
-KEEP_UP=1 ./advanced/05_sentry_ip_rotation.sh
+KEEP_UP=1 ./scenarios/05_sentry_ip_rotation.sh
 ```
 
-## Scenario Tiers
+## Scenario Selection
 
-The scenario scripts now live in two folders:
+All scenario scripts live in `scenarios/`. Each script declares whether it should run in CI:
 
-- `basics/`: the core validator-flow scenarios run by `.github/workflows/ci-val-scenarios.yml`
-- `advanced/`: heavier, exploratory, or bug-tracking scenarios intended for local runs
+- `SCENARIO_CI=true`: included in `.github/workflows/ci-val-scenarios.yml` and `make test`
+- `SCENARIO_CI=false`: requires `valsignerd` and is local-only
 
-### Basics
+### CI Scenarios
 
-- `basics/02_four_validators_restart_staggered.sh`: start 4 validators, stop all after 60s, restart one by one
-- `basics/03_four_validators_restart_parallel.sh`: start 4 validators, stop all after 60s, restart all together
-- `basics/04_counter_realm_churn.sh`: deploy a sample counter realm, submit transactions, reset one validator, continue submitting txs
-- `basics/07_five_validators_reset_one.sh`: start 5 validators, stop/reset/restart 1 — 4/5 remain above the 2/3 threshold so the chain must keep advancing throughout
-- `basics/09_five_validators_safe_reset_one.sh`: same as 07 but uses a safe reset (db + wal only, `priv_validator_state` preserved) to avoid double signing
-- `basics/10_five_validators_safe_reset_two_below_consensus.sh`: same as 08 but uses a safe reset
-- `basics/11_weighted_voting_power_majority.sh`: 4 validators with voting power 10/1/1/1 — val1 alone holds >2/3 of total power, so stopping val2–4 must not halt the chain
+- `scenarios/01_four_validators_reset_three.sh`: start 4 validators, run 60s, stop/reset 3, restart them, run 60s again
+- `scenarios/02_three_validators_restart_staggered.sh`: start 3 validators, stop all after 60s, restart one by one
+- `scenarios/03_three_validators_restart_parallel.sh`: start 3 validators, stop all after 60s, restart all together
+- `scenarios/04_counter_realm_churn.sh`: deploy a sample counter realm, submit transactions, reset one validator, continue submitting txs
+- `scenarios/05_sentry_ip_rotation.sh`: run validators behind a sentry, recreate the sentry to force a new container IP, and verify the network keeps progressing
+- `scenarios/06_gas_nondeterminism_check.sh`: restart a subset of validators, estimate addpkg gas on a warm node, and fail if the chain halts after the trigger tx
+- `scenarios/07_four_validators_reset_one.sh`: start 4 validators, stop/reset/restart 1; 3/4 remain above the 2/3 threshold so the chain must keep advancing throughout
+- `scenarios/08_five_validators_reset_two_below_consensus.sh`: start 5 validators, stop/reset 2; 3/5 drops below the 2/3 threshold so the chain must halt, then verify it resumes after both validators are restarted
+- `scenarios/09_four_validators_safe_reset_one.sh`: same as 07 but uses a safe reset (db + wal only, `priv_validator_state` preserved) to avoid double signing
+- `scenarios/10_four_validators_safe_reset_two_below_consensus.sh`: start 4 validators, safe-reset 2, verify the chain halts below consensus and resumes after restart
+- `scenarios/11_weighted_voting_power_majority.sh`: 4 validators with voting power 10/1/1/1; val1 alone holds more than 2/3 of total power, so stopping val2-4 must not halt the chain
+- `scenarios/12_duplicate_addr_in_val_proposal.sh`: governance proposal with two entries for the same validator address (VotingPower=0 then VotingPower=5)
+- `scenarios/13_duplicate_addr_across_proposals.sh`: two valid validator proposals in the same block target the same address
+- `scenarios/17_govdao_add_remove_validator.sh`: add and remove a validator through GovDAO proposals
 
-### Advanced
+### Local-Only Valsignerd Scenarios
 
-- `advanced/01_five_validators_reset_four.sh`: start 5 validators, run 60s, stop/reset 4, restart them, run 60s again
-- `advanced/05_sentry_ip_rotation.sh`: run validators behind a sentry, recreate the sentry to force a new container IP, and verify the network keeps progressing
-- `advanced/06_gas_nondeterminism_check.sh`: restart a subset of validators, estimate addpkg gas on a warm node, and fail if the chain halts after the trigger tx
-- `advanced/08_five_validators_reset_two_below_consensus.sh`: start 5 validators, stop/reset 2 — 3/5 drops below the 2/3 threshold so the chain must halt, then verify it resumes after both validators are restarted
-- `advanced/12_duplicate_addr_in_val_proposal.sh`: governance proposal with two entries for the same validator address (VotingPower=0 then VotingPower=5) — expected to end with the validator at power 5, but currently fails due to a bug
-- `advanced/13_duplicate_addr_across_proposals.sh`: two valid validator proposals in the same block target the same address — expected to converge on the last change, but currently crashes in EndBlocker due to duplicate aggregate changes
-- `advanced/14_five_validators_drop_proposals_with_signers.sh`: 5 validators with controllable signer sidecars — drop proposal signatures on all validators live, assert the chain halts at a fixed height, clear the rules, assert consensus resumes without restarting nodes
-- `advanced/15_four_validators_drop_prevotes_thresholds.sh`: 4 validators with controllable signer sidecars — drop prevotes on 1 validator and assert the chain keeps advancing, then drop prevotes on 3/4 validators and assert the chain halts
-- `advanced/16_four_validators_precommit_delays_thresholds.sh`: 4 validators with controllable signer sidecars — progressively delay precommits below and above `timeout_commit`, assert the chain still advances while a quorum can eventually form, then push two validators past the observation window and assert block production stalls
+- `scenarios/14_four_validators_drop_proposals_with_signers.sh`: 4 validators with controllable signer sidecars; drop proposal signatures on all validators and assert consensus resumes after clearing the rules
+- `scenarios/15_four_validators_drop_prevotes_thresholds.sh`: 4 validators with controllable signer sidecars; drop prevotes below and above quorum thresholds
+- `scenarios/16_four_validators_precommit_delays_thresholds.sh`: 4 validators with controllable signer sidecars; delay precommits below and above `timeout_commit`
 
 ## Reusable Scenario API
 
 Scenarios source `lib/scenario.sh` and use a small set of helpers:
 
 - `scenario_init <name>`
-- `gen_validator <name> [--rpc-port <port>] [--sentry <sentry-name>] [--controllable-signer]`
+- `gen_validator <name> [--rpc-port <port>] [--sentry <sentry-name>] [--controllable-signer] [--not-in-genesis]`
 - `gen_sentry <name> [--rpc-port <port>]`
 - `prepare_network`
 - `start_all_nodes`
@@ -125,7 +142,7 @@ Scenarios source `lib/scenario.sh` and use a small set of helpers:
 - `rotate_sentry_ip <sentry-name>`
 - `print_cluster_status`
 
-`wait_for_seconds` is used instead of `wait` to avoid colliding with Bash’s built-in `wait`.
+`wait_for_seconds` is used instead of `wait` to avoid colliding with Bash's built-in `wait`.
 
 ## Controllable Signers
 
@@ -180,14 +197,20 @@ curl -fsS -X POST http://127.0.0.1:26658/reset
 
 ## Adding A New Scenario
 
-Scenario files must follow the naming pattern `NN_<name>.sh` (e.g. `13_my_new_scenario.sh`), where `NN` is a zero-padded two-digit number. Place the file under `basics/` if it is suitable for GitHub Actions CI, or under `advanced/` if it is intended for local-only or exploratory runs. The Makefile auto-discovers files matching `basics/*.sh` and `advanced/*.sh`, and generates `scenario-NN`, `logs-NN`, and `clean-NN` targets from the numeric prefix. The script must call `scenario_init "scenario-NN"` with the matching number so that the docker-compose project name and work directory align with those targets.
+Scenario files must follow the naming pattern `NN_<name>.sh` (e.g. `18_my_new_scenario.sh`), where `NN` is a zero-padded two-digit number. Place the file under `scenarios/`, declare `SCENARIO_CI=true` or `SCENARIO_CI=false`, and call `scenario_init "scenario-NN"` with the matching number so that the docker-compose project name and work directory align with the generated targets.
+
+The Makefile auto-discovers files matching `scenarios/*.sh`, and generates `scenario-NN`, `logs-NN`, and `clean-NN` targets from the numeric prefix.
 
 The intended flow is:
 
-1. place the file in `basics/` or `advanced/`, and call `scenario_init "scenario-NN"`
-2. `source` the shared library
-3. declare validators / sentries with `gen_validator` and `gen_sentry`
-4. call `prepare_network`
-5. compose the scenario out of lifecycle and transaction helpers
+1. place the file in `scenarios/`
+2. set `SCENARIO_CI=true` or `SCENARIO_CI=false`
+3. `source` the shared library
+4. call `scenario_init "scenario-NN"`
+5. declare validators / sentries with `gen_validator` and `gen_sentry`
+6. call `prepare_network`
+7. compose the scenario out of lifecycle and transaction helpers
 
-See any file under `basics/` or `advanced/` for examples.
+Use `gen_validator <name> --not-in-genesis` for a validator node that should exist in the generated docker-compose topology but enter the validator set later through a transaction or proposal.
+
+See any file under `scenarios/` for examples.

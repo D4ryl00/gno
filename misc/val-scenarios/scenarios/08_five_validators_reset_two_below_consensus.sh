@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCENARIO_CI=true
+
 # 5 validators, stop/reset/restart 2.
 # 3/5 remain during the reset (60% < 2/3 threshold) so the chain must halt.
 # After the two validators are restarted the chain must resume.

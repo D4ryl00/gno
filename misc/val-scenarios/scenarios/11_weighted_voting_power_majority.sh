@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCENARIO_CI=true
+
 # 4 validators with unequal voting power: 10 / 1 / 1 / 1 (total = 13).
 # The 2/3 threshold is ceil(2/3 * 13) = 9.
 # val1 alone holds 10 > 9, so stopping val2, val3, and val4 must not halt

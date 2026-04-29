@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCENARIO_CI=true
+
 # Scenario 13: duplicate validator address across two separate proposals in the
 # same block.
 #

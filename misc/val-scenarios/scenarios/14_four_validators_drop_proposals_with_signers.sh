@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCENARIO_CI=false
+
 # 4 validators with controllable signer sidecars.
 # Drop proposal signatures on all validators while they stay online.
 # Consensus keeps advancing rounds via timeout_propose, but no blocks can be

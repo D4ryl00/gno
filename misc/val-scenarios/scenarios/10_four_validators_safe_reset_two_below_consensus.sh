@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+SCENARIO_CI=true
+
 # 4 validators, safe reset 2 (db + wal only, priv_validator_state preserved).
 # 2/4 remain during the reset (50% < 2/3 threshold) so the chain must halt.
 # After the two validators are restarted the chain must resume.
