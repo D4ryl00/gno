@@ -18,7 +18,7 @@ import (
 const (
 	ledgerINSPublicKeyED25519 = 0x01
 	ledgerINSSignED25519      = 0x02
-	ledgerMessageChunkSize    = 32 // needded for macOS HID IO issues
+	ledgerMessageChunkSize    = 256 // needded for macOS HID IO issues
 )
 
 func (ledger *tendermintLedger) signED25519(message []byte) ([]byte, error) {
@@ -112,26 +112,44 @@ func (ls *ledgerSigner) Sign(signBytes []byte) ([]byte, error) {
 
 // Close implements types.Signer.
 func (ls *ledgerSigner) Close() error {
-	return ls.ledger.Close()
+	ls.logger.Info("closing ledger connection")
+	start := time.Now()
+
+	if err := ls.ledger.Close(); err != nil {
+		return err
+	}
+
+	ls.logger.Info("ledger connection closed", "duration", time.Since(start))
+	return nil
 }
 
 // newLedgerSigner initializes a new ledger signer using the Tendermint validator app.
 func newLedgerSigner(logger *slog.Logger) (*ledgerSigner, error) {
+	logger.Info("opening ledger connection")
+	start := time.Now()
+
 	ledger, err := openTendermintLedger()
 	if err != nil {
 		return nil, fmt.Errorf("unable to connect to Ledger Tendermint validator app: %w", err)
 	}
+	logger.Info("ledger connection opened", "duration", time.Since(start))
 
+	logger.Info("validating ledger app version")
+	start = time.Now()
 	if err := validateLedgerApp(ledger); err != nil {
 		_ = ledger.Close()
 		return nil, err
 	}
+	logger.Info("ledger app version validated", "duration", time.Since(start))
 
+	logger.Info("fetching public key from ledger")
+	start = time.Now()
 	pubKeyBytes, err := ledger.getPublicKeyED25519()
 	if err != nil {
 		_ = ledger.Close()
 		return nil, fmt.Errorf("unable to fetch ledger public key: %w", err)
 	}
+	logger.Info("public key received from ledger", "duration", time.Since(start))
 
 	if len(pubKeyBytes) != ed25519.PubKeyEd25519Size {
 		_ = ledger.Close()
