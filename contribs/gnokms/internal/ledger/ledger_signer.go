@@ -5,8 +5,10 @@ package ledger
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"sync"
+	"time"
 
 	"github.com/gnolang/gno/tm2/pkg/bft/types"
 	"github.com/gnolang/gno/tm2/pkg/crypto"
@@ -75,6 +77,7 @@ func formatLedgerError(err error, response []byte) error {
 type ledgerSigner struct {
 	ledger *tendermintLedger
 	pubKey ed25519.PubKeyEd25519
+	logger *slog.Logger
 	mu     sync.Mutex
 }
 
@@ -91,6 +94,9 @@ func (ls *ledgerSigner) Sign(signBytes []byte) ([]byte, error) {
 	ls.mu.Lock()
 	defer ls.mu.Unlock()
 
+	ls.logger.Info("sign request received", "bytes", len(signBytes))
+	start := time.Now()
+
 	signature, err := ls.ledger.signED25519(signBytes)
 	if err != nil {
 		return nil, err
@@ -100,6 +106,7 @@ func (ls *ledgerSigner) Sign(signBytes []byte) ([]byte, error) {
 		return nil, fmt.Errorf("unexpected ledger signature length: %d", len(signature))
 	}
 
+	ls.logger.Info("signature received from ledger", "duration", time.Since(start))
 	return signature, nil
 }
 
@@ -109,7 +116,7 @@ func (ls *ledgerSigner) Close() error {
 }
 
 // newLedgerSigner initializes a new ledger signer using the Tendermint validator app.
-func newLedgerSigner() (*ledgerSigner, error) {
+func newLedgerSigner(logger *slog.Logger) (*ledgerSigner, error) {
 	ledger, err := openTendermintLedger()
 	if err != nil {
 		return nil, fmt.Errorf("unable to connect to Ledger Tendermint validator app: %w", err)
@@ -137,5 +144,6 @@ func newLedgerSigner() (*ledgerSigner, error) {
 	return &ledgerSigner{
 		ledger: ledger,
 		pubKey: pubKey,
+		logger: logger,
 	}, nil
 }

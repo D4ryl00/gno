@@ -99,35 +99,38 @@ func printValidatorInfo(signer types.Signer, logger *slog.Logger) error {
 	return nil
 }
 
-// RunSignerServer initializes and start a remote signer server with the given gnokms signer.
+// RunSignerServer initializes and starts a remote signer server with the given gnokms signer.
 // It then waits for the server to finish.
 func RunSignerServer(ctx context.Context, commonFlags *ServerFlags, signer types.Signer, io commands.IO) error {
-	// Initialize the logger.
 	logger, flusher, err := LoggerFromServerFlags(commonFlags, io)
 	if err != nil {
 		return fmt.Errorf("logger initialization failed: %w", err)
 	}
+	return runSignerServer(ctx, commonFlags, signer, logger, flusher)
+}
 
-	// Flush any remaining server logs on exit.
+// RunSignerServerWithLogger is like RunSignerServer but uses a pre-created logger and its flush
+// function, avoiding a second logger instantiation when the caller already holds one.
+func RunSignerServerWithLogger(ctx context.Context, commonFlags *ServerFlags, signer types.Signer, logger *slog.Logger, flusher func(), io commands.IO) error {
+	return runSignerServer(ctx, commonFlags, signer, logger, flusher)
+}
+
+func runSignerServer(ctx context.Context, commonFlags *ServerFlags, signer types.Signer, logger *slog.Logger, flusher func()) error {
 	defer flusher()
 
-	// Print the validator info of the signer.
 	if err := printValidatorInfo(signer, logger); err != nil {
 		return fmt.Errorf("unable to print genesis validator info: %w", err)
 	}
 
-	// Initialize the remote signer server with the gnokms signer.
 	server, err := NewSignerServer(commonFlags, signer, logger)
 	if err != nil {
 		return fmt.Errorf("signer server initialization failed: %w", err)
 	}
 
-	// Start the remote signer server.
 	if err := server.Start(); err != nil {
 		return fmt.Errorf("signer server start failed: %w", err)
 	}
 
-	// Catch SIGINT/SIGTERM/SIGQUIT signals to stop the server gracefully.
 	serverCtx, _ := signal.NotifyContext(
 		ctx,
 		os.Interrupt,
@@ -136,10 +139,8 @@ func RunSignerServer(ctx context.Context, commonFlags *ServerFlags, signer types
 		syscall.SIGQUIT,
 	)
 
-	// Wait for the server context to be done.
 	<-serverCtx.Done()
 
-	// Close the server and the signer gracefully.
 	return multierr.Combine(
 		server.Stop(),
 		signer.Close(),

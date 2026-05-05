@@ -5,6 +5,7 @@ package ledger
 import (
 	"context"
 	"flag"
+	"fmt"
 
 	"github.com/gnolang/gno/contribs/gnokms/internal/common"
 	"github.com/gnolang/gno/tm2/pkg/commands"
@@ -42,10 +43,16 @@ func execLedger(ctx context.Context, args []string, ledgerFlags *ledgerFlags, io
 		return flag.ErrHelp
 	}
 
-	ledgerSigner, err := newLedgerSigner()
+	logger, flusher, err := common.LoggerFromServerFlags(&ledgerFlags.ServerFlags, io)
 	if err != nil {
+		return fmt.Errorf("logger initialization failed: %w", err)
+	}
+
+	ledgerSigner, err := newLedgerSigner(logger)
+	if err != nil {
+		flusher()
 		return err
 	}
 
-	return common.RunSignerServer(ctx, &ledgerFlags.ServerFlags, ledgerSigner, io)
+	return common.RunSignerServerWithLogger(ctx, &ledgerFlags.ServerFlags, ledgerSigner, logger, flusher, io)
 }

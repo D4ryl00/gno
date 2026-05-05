@@ -77,6 +77,9 @@ func (rsc *RemoteSignerClient) cachePubKey() error {
 
 // Sign implements types.Signer.
 func (rsc *RemoteSignerClient) Sign(signBytes []byte) ([]byte, error) {
+	rsc.logger.Info("sign request sent to gnokms", "bytes", len(signBytes))
+	start := time.Now()
+
 	response, err := rsc.send(&r.SignRequest{SignBytes: signBytes})
 	if err != nil {
 		err := fmt.Errorf("%w: %w", ErrSendingRequestFailed, err)
@@ -99,7 +102,7 @@ func (rsc *RemoteSignerClient) Sign(signBytes []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	rsc.logger.Debug("Sign request succeeded")
+	rsc.logger.Info("signature received from gnokms", "duration", time.Since(start))
 
 	return signResponse.Signature, nil
 }
