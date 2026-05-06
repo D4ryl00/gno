@@ -70,7 +70,7 @@ SCENARIO_TARGETS := $(foreach s,$(SCENARIO_SCRIPTS),scenario-$(call scenario_num
 CI_SCENARIO_TARGETS := $(foreach s,$(CI_SCENARIO_SCRIPTS),scenario-$(call scenario_num,$(s)))
 LOCAL_ONLY_SCENARIO_TARGETS := $(foreach s,$(LOCAL_ONLY_SCENARIO_SCRIPTS),scenario-$(call scenario_num,$(s)))
 
-.PHONY: test test-ci ci test-local local-only test-all test-basics basics test-advanced advanced build-core-image build-gnoland-image build-gnokey-image build-gnogenesis-image build-valsigner-image build-images fetch-remote clone-gno clean status
+.PHONY: test test-ci ci test-local local-only test-all test-basics basics test-advanced advanced build-core-image build-gnoland-image build-gnokey-image build-gnogenesis-image build-valsigner-image build-images build-gnokms-ledger fetch-remote clone-gno clean status
 
 # Run the CI scenarios in order, stopping on the first failure.
 test: test-ci
@@ -115,6 +115,21 @@ build-valsigner-image: $(_FETCH_PREREQ)
 	docker build -t $(VALSIGNER_IMAGE) -f $(VALSIGNER_GNO_ROOT)/misc/val-scenarios/Dockerfile --target valsignerd $(VALSIGNER_GNO_ROOT)
 
 build-images: build-core-image build-gnogenesis-image build-valsigner-image
+
+# Host-side gnokms binary with ledger support, for scenario 20.
+# Uses a git worktree so the local repo's currently checked-out branch is
+# untouched. Requires CGO_ENABLED=1 (xcode CLI tools on macOS, gcc + libusb
+# headers on Linux).
+GNOKMS_LEDGER_BRANCH ?= chore/ledger-benchmarks
+GNOKMS_LEDGER_WORKTREE ?= /tmp/gnokms-ledger-src
+GNOKMS_LEDGER_BIN ?= /tmp/gnokms-ledger
+
+build-gnokms-ledger:
+	@if [ ! -d "$(GNOKMS_LEDGER_WORKTREE)" ]; then \
+		git -C $(LOCAL_GNO_ROOT) worktree add "$(GNOKMS_LEDGER_WORKTREE)" "$(GNOKMS_LEDGER_BRANCH)"; \
+	fi
+	cd "$(GNOKMS_LEDGER_WORKTREE)/contribs/gnokms" && CGO_ENABLED=1 go build -o "$(GNOKMS_LEDGER_BIN)" .
+	@echo "built $(GNOKMS_LEDGER_BIN) from $(GNOKMS_LEDGER_BRANCH)"
 
 clean:
 	rm -rf $(WORK_ROOT)
