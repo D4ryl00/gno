@@ -125,6 +125,7 @@ GNOKMS_LEDGER_WORKTREE ?= /tmp/gnokms-ledger-src
 GNOKMS_LEDGER_BIN ?= /tmp/gnokms-ledger
 
 build-gnokms-ledger:
+	@git -C $(LOCAL_GNO_ROOT) worktree prune
 	@if [ ! -d "$(GNOKMS_LEDGER_WORKTREE)" ]; then \
 		git -C $(LOCAL_GNO_ROOT) worktree add "$(GNOKMS_LEDGER_WORKTREE)" "$(GNOKMS_LEDGER_BRANCH)"; \
 	fi

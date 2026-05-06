@@ -79,6 +79,17 @@ die() {
   exit 1
 }
 
+dump_ledger_log() {
+  local node="$1" logf="$2"
+  printf -- '--- last lines of host gnokms-ledger log for %s (%s) ---\n' "$node" "$logf" >&2
+  if [ -s "$logf" ]; then
+    tail -n 30 "$logf" >&2
+  else
+    printf '(empty log — gnokms-ledger produced no output before exiting)\n' >&2
+  fi
+  printf -- '--- end log ---\n' >&2
+}
+
 join_by() {
   local delimiter="${1:?delimiter required}"
   shift || true
@@ -705,6 +716,7 @@ discover_ledger_pubkeys() {
     mkdir -p "$(dirname "$logf")"
 
     log "starting host gnokms-ledger for ${node} (port=${port}, log=${logf})"
+    : > "$logf"
     "$GNOKMS_LEDGER_BIN" ledger \
       --listener "tcp://0.0.0.0:${port}" \
       --log-level "$LOG_LEVEL" \
@@ -716,20 +728,40 @@ discover_ledger_pubkeys() {
     NODE_LEDGER_LOG_FILE[$node]="$logf"
     disown "$pid" 2>/dev/null || true
 
-    local i pubkey="" address=""
+    # Mirror gnokms output to the terminal in real time so the user sees any
+    # error printed at exit. The tail follows the same file we're polling.
+    tail -n +1 -F "$logf" >&2 2>/dev/null &
+    local tail_pid="$!"
+    disown "$tail_pid" 2>/dev/null || true
+
+    local i pubkey="" address="" exit_reason=""
     for i in $(seq 1 "$GNOKMS_LEDGER_TIMEOUT"); do
       if ! kill -0 "$pid" 2>/dev/null; then
-        die "host gnokms-ledger exited before publishing a pubkey; see ${logf}"
+        exit_reason="exited"
+        break
       fi
-      pubkey="$(grep -E '^[[:space:]]+pub_key:[[:space:]]+gpub' "$logf" 2>/dev/null | head -1 | awk '{print $2}')"
-      address="$(grep -E '^[[:space:]]+address:[[:space:]]+g1' "$logf" 2>/dev/null | head -1 | awk '{print $2}')"
+      # awk returns 0 on no match (unlike grep), so this stays compatible
+      # with `set -o pipefail` even when the log doesn't yet contain pubkey.
+      pubkey="$(awk '/^[[:space:]]+pub_key:[[:space:]]+gpub/ {print $2; exit}' "$logf" 2>/dev/null)"
+      address="$(awk '/^[[:space:]]+address:[[:space:]]+g1/ {print $2; exit}' "$logf" 2>/dev/null)"
       if [ -n "$pubkey" ] && [ -n "$address" ]; then
         break
       fi
       sleep 1
     done
 
-    [ -n "$pubkey" ] && [ -n "$address" ] || die "did not see ledger pubkey within ${GNOKMS_LEDGER_TIMEOUT}s; see ${logf}"
+    # Stop the mirror tail; flush any final output it had pending.
+    kill "$tail_pid" 2>/dev/null || true
+    wait "$tail_pid" 2>/dev/null || true
+
+    if [ "$exit_reason" = "exited" ]; then
+      dump_ledger_log "$node" "$logf"
+      die "host gnokms-ledger exited before publishing a pubkey; see ${logf}"
+    fi
+    if [ -z "$pubkey" ] || [ -z "$address" ]; then
+      dump_ledger_log "$node" "$logf"
+      die "did not see ledger pubkey within ${GNOKMS_LEDGER_TIMEOUT}s; see ${logf}"
+    fi
 
     NODE_PUBKEY[$node]="$pubkey"
     NODE_ADDRESS[$node]="$address"
@@ -774,13 +806,29 @@ create_tx_key() {
       add "$TX_KEY_NAME" --home /keys --recover --quiet --insecure-password-stdin >/dev/null
 }
 
+wipe_scenario_dir() {
+  [ -d "$SCENARIO_DIR" ] || return 0
+  if rm -rf "$SCENARIO_DIR" 2>/dev/null; then
+    return 0
+  fi
+  # Files inside SCENARIO_DIR may be owned by root because previous runs
+  # created them inside docker containers. Wipe them as root via a one-shot
+  # container so we can start fresh without sudo.
+  log "wiping ${SCENARIO_DIR} via container (root-owned files left by previous run)"
+  docker run --rm --entrypoint sh \
+    -v "${WORK_ROOT}:/work" \
+    "$IMAGE_NAME" \
+    -c "rm -rf /work/${PROJECT_NAME}" \
+    || die "failed to wipe ${SCENARIO_DIR}; remove it manually"
+}
+
 prepare_network() {
   require_tools
   ensure_image_exists
 
   [ "${#SCENARIO_NODES[@]}" -gt 0 ] || die "no nodes declared"
 
-  rm -rf "$SCENARIO_DIR"
+  wipe_scenario_dir
   mkdir -p "$SCENARIO_DIR"
 
   init_node_dirs
