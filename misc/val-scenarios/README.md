@@ -118,14 +118,16 @@ All scenario scripts live in `scenarios/`. Each script declares whether it shoul
 - `scenarios/15_four_validators_drop_prevotes_thresholds.sh`: 4 validators with controllable signer sidecars; drop prevotes below and above quorum thresholds
 - `scenarios/16_four_validators_precommit_delays_thresholds.sh`: 4 validators with controllable signer sidecars; delay precommits below and above `timeout_commit`
 - `scenarios/18_signer_latency_baseline.sh`: 4 validators with controllable signer sidecars (local backend); run for `TARGET_BLOCKS` blocks (default 100) and print per-phase Sign() latency
-- `scenarios/19_signer_latency_with_gnokms.sh`: same as 18 but with a `gnokms` sidecar in front of each signer (filekey backend); the latency delta vs scenario 18 is the gnokms overlay cost
+- `scenarios/19_signer_latency_with_gnokms.sh`: same as 18 but with a `gnokms` sidecar in front of each signer (gnokey backend); the latency delta vs scenario 18 is the gnokms overlay cost
+- `scenarios/20_signer_latency_with_gnokms_ledger.sh`: 1 ledger-backed validator + 3 gnokey-backed validators for quorum; the ledger-backed validator routes signing through a host-side `gnokms` (CGO + USB) talking to a Ledger device. Compare its per-phase Sign() latency against the others to see the gnokms+ledger overlay
+- `scenarios/21_single_ledger_validator.sh`: single ledger-backed validator (no peers). All signatures go through gnokms+ledger, so the Sign() latency is the unmixed overlay cost; useful for direct comparison against scenarios 18 (no gnokms) and 19 (gnokms+gnokey)
 
 ## Reusable Scenario API
 
 Scenarios source `lib/scenario.sh` and use a small set of helpers:
 
 - `scenario_init <name>`
-- `gen_validator <name> [--rpc-port <port>] [--sentry <sentry-name>] [--controllable-signer | --gnokms-backed-signer] [--not-in-genesis]`
+- `gen_validator <name> [--rpc-port <port>] [--sentry <sentry-name>] [--controllable-signer | --gnokms-backed-signer | --ledger-backed-signer] [--not-in-genesis]`
 - `gen_sentry <name> [--rpc-port <port>]`
 - `prepare_network`
 - `start_all_nodes`
@@ -189,6 +191,38 @@ validator -> valsignerd (metrics) -> gnokms -> gnokey keybase
 `gnokms` upstream only ships the `gnokey` backend, which reads from a gnokey keybase. To avoid modifying gnokms, `prepare_network` runs the `valkeyimport` helper (built into the `valsignerd` image) once per gnokms-backed validator: it reads `priv_validator_key.json` and imports the ed25519 priv key into a fresh keybase under `<node>/gnokms-keys`. The `gnokms` sidecar is then started with `gnokms gnokey <key-name> --home /keys --insecure-password-stdin`, fed the keybase password (`GNOKMS_KEYBASE_PASSWORD`, default `scenario`) on stdin.
 
 Use this to measure the gnokms overlay cost: run an identical scenario with `--controllable-signer` and `--gnokms-backed-signer` and subtract the per-phase Sign() latencies. See `scenarios/18_signer_latency_baseline.sh` and `scenarios/19_signer_latency_with_gnokms.sh`.
+
+## Ledger-Backed Signers
+
+Pass `--ledger-backed-signer` to `gen_validator` to route signing through a host-side `gnokms` instance using a Ledger device:
+
+```text
+validator -> valsignerd (metrics) -> host gnokms (ledger) -> Ledger device
+```
+
+`gnokms ledger` requires CGO + USB HID, which doesn't work cleanly inside Docker on macOS. Instead, the scenario runs `gnokms ledger` directly on the host (built via `make build-gnokms-ledger`, default at `$GNOKMS_LEDGER_BIN=/tmp/gnokms-ledger`), and the in-Docker `valsignerd` dials it through `host.docker.internal:$GNOKMS_LEDGER_HOST_PORT` (default `26660`).
+
+Prerequisites:
+
+- The Tendermint validator app must be installed on the Ledger device
+- Ledger Live (or any other client claiming the device) must be quit
+- Only one ledger-backed validator per scenario (single physical device)
+
+Workflow inside `prepare_network`:
+
+1. Prompts the user to plug the Ledger in and open the Tendermint validator app
+2. Starts `gnokms ledger` on the host, scrapes the validator pubkey from its startup log
+3. Injects that pubkey into the genesis validator entry (replaces the address/pubkey from `priv_validator_key.json`, which is unused once the remote signer is configured)
+4. Leaves `gnokms ledger` running for the duration of the scenario; `scenario_finish` kills it
+
+Build the host-side gnokms binary once before running scenario 20:
+
+```bash
+make build-gnokms-ledger
+make scenario-20
+```
+
+The binary is built from a git worktree of the `chore/ledger-benchmarks` branch (override with `GNOKMS_LEDGER_BRANCH=...`), leaving the currently checked-out working tree untouched.
 
 Example live control commands against a running scenario:
 

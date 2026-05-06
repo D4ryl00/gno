@@ -22,6 +22,9 @@ LOG_LEVEL="${LOG_LEVEL:-info}"
 REMOTE_SIGNER_REQUEST_TIMEOUT="${REMOTE_SIGNER_REQUEST_TIMEOUT:-30s}"
 GNOKMS_KEYBASE_PASSWORD="${GNOKMS_KEYBASE_PASSWORD:-scenario}"
 GNOKMS_KEYBASE_KEY_NAME="${GNOKMS_KEYBASE_KEY_NAME:-validator}"
+GNOKMS_LEDGER_BIN="${GNOKMS_LEDGER_BIN:-/tmp/gnokms-ledger}"
+GNOKMS_LEDGER_HOST_PORT="${GNOKMS_LEDGER_HOST_PORT:-26660}"
+GNOKMS_LEDGER_TIMEOUT="${GNOKMS_LEDGER_TIMEOUT:-60}"
 TX_KEY_NAME="${TX_KEY_NAME:-scenario-tx}"
 TX_PASSWORD="${TX_PASSWORD:-test123456}"
 TX_MNEMONIC="${TX_MNEMONIC:-source bonus chronic canvas draft south burst lottery vacant surface solve popular case indicate oppose farm nothing bullet exhibit title speed wink action roast}"
@@ -54,6 +57,10 @@ declare -A NODE_SIGNER_SERVICE=()
 declare -A NODE_CONTROL_PORT=()
 declare -A NODE_GNOKMS_BACKED=()
 declare -A NODE_GNOKMS_SERVICE=()
+declare -A NODE_LEDGER_BACKED=()
+declare -A NODE_LEDGER_HOST_PORT=()
+declare -A NODE_LEDGER_GNOKMS_PID=()
+declare -A NODE_LEDGER_LOG_FILE=()
 declare -A NODE_LOG_PID=()
 
 SCENARIO_NAME=""
@@ -139,6 +146,10 @@ scenario_init() {
   NODE_CONTROL_PORT=()
   NODE_GNOKMS_BACKED=()
   NODE_GNOKMS_SERVICE=()
+  NODE_LEDGER_BACKED=()
+  NODE_LEDGER_HOST_PORT=()
+  NODE_LEDGER_GNOKMS_PID=()
+  NODE_LEDGER_LOG_FILE=()
   NODE_LOG_PID=()
 }
 
@@ -182,6 +193,7 @@ gen_validator() {
   local power="1"
   local controllable_signer="false"
   local gnokms_backed="false"
+  local ledger_backed="false"
   local in_genesis="true"
 
   while [ "$#" -gt 0 ]; do
@@ -212,6 +224,11 @@ gen_validator() {
         gnokms_backed="true"
         shift
         ;;
+      --ledger-backed-signer)
+        controllable_signer="true"
+        ledger_backed="true"
+        shift
+        ;;
       --not-in-genesis)
         in_genesis="false"
         shift
@@ -222,10 +239,15 @@ gen_validator() {
     esac
   done
 
+  if [ "$gnokms_backed" = "true" ] && [ "$ledger_backed" = "true" ]; then
+    die "validator ${name}: --gnokms-backed-signer and --ledger-backed-signer are mutually exclusive"
+  fi
+
   register_node "$name" validator "$rpc_port" "$pex" "$sentry" "$in_genesis"
   NODE_POWER[$name]="$power"
   NODE_CONTROLLABLE_SIGNER[$name]="$controllable_signer"
   NODE_GNOKMS_BACKED[$name]="$gnokms_backed"
+  NODE_LEDGER_BACKED[$name]="$ledger_backed"
   if [ "$controllable_signer" = "true" ]; then
     NODE_SIGNER_SERVICE[$name]="${name}-signer"
     NODE_CONTROL_PORT[$name]=""
@@ -564,8 +586,10 @@ write_compose_file() {
     local node
     local signer
     local gnokms_backed
+    local ledger_backed
     for signer in "${SCENARIO_SIGNERS[@]}"; do
       gnokms_backed="${NODE_GNOKMS_BACKED[$signer]:-false}"
+      ledger_backed="${NODE_LEDGER_BACKED[$signer]:-false}"
       if [ "$gnokms_backed" = "true" ]; then
         # Keybase mounted rw: gnokey opens leveldb with a write lock.
         printf '  %s:\n' "${NODE_GNOKMS_SERVICE[$signer]}"
@@ -586,7 +610,10 @@ write_compose_file() {
       printf '  %s:\n' "${NODE_SIGNER_SERVICE[$signer]}"
       printf '    image: "%s"\n' "$VALSIGNER_IMAGE"
       printf '    command:\n'
-      if [ "$gnokms_backed" = "true" ]; then
+      if [ "$ledger_backed" = "true" ]; then
+        printf '      - --gnokms-addr\n'
+        printf '      - tcp://host.docker.internal:%s\n' "${NODE_LEDGER_HOST_PORT[$signer]}"
+      elif [ "$gnokms_backed" = "true" ]; then
         printf '      - --gnokms-addr\n'
         printf '      - tcp://%s:26659\n' "${NODE_GNOKMS_SERVICE[$signer]}"
       else
@@ -608,7 +635,11 @@ write_compose_file() {
       printf '    networks:\n'
       printf '      - chain\n'
       printf '    stop_grace_period: 5s\n'
-      if [ "$gnokms_backed" = "true" ]; then
+      if [ "$ledger_backed" = "true" ]; then
+        # Linux Docker needs this mapping; macOS Docker Desktop ignores it.
+        printf '    extra_hosts:\n'
+        printf '      - "host.docker.internal:host-gateway"\n'
+      elif [ "$gnokms_backed" = "true" ]; then
         printf '    depends_on:\n'
         printf '      - %s\n' "${NODE_GNOKMS_SERVICE[$signer]}"
       fi
@@ -649,6 +680,74 @@ write_compose_file() {
   } > "$COMPOSE_FILE"
 }
 
+discover_ledger_pubkeys() {
+  local ledger_count=0
+  local node
+  for node in "${SCENARIO_VALIDATORS[@]+"${SCENARIO_VALIDATORS[@]}"}"; do
+    [ "${NODE_LEDGER_BACKED[$node]:-false}" = "true" ] || continue
+    ledger_count=$((ledger_count + 1))
+    [ "$ledger_count" -le 1 ] || die "only one --ledger-backed-signer validator is supported (one physical Ledger)"
+    [ -x "$GNOKMS_LEDGER_BIN" ] || die "gnokms-ledger binary not found at ${GNOKMS_LEDGER_BIN}; build it with 'make build-gnokms-ledger'"
+
+    printf '\n'
+    printf '╭───────────────────────────────────────────────────────────╮\n'
+    printf '│ Ledger setup for validator %-32s │\n' "$node"
+    printf '├───────────────────────────────────────────────────────────┤\n'
+    printf '│  1. Plug the Ledger device into this host.                │\n'
+    printf '│  2. Unlock it.                                            │\n'
+    printf '│  3. Open the Tendermint validator app on the device.      │\n'
+    printf '│  4. Quit Ledger Live (it grabs the device exclusively).   │\n'
+    printf '╰───────────────────────────────────────────────────────────╯\n'
+    read -r -p "Press Enter when ready... " _
+
+    local port="$GNOKMS_LEDGER_HOST_PORT"
+    local logf="${SCENARIO_DIR}/logs/${node}-host-gnokms.log"
+    mkdir -p "$(dirname "$logf")"
+
+    log "starting host gnokms-ledger for ${node} (port=${port}, log=${logf})"
+    "$GNOKMS_LEDGER_BIN" ledger \
+      --listener "tcp://0.0.0.0:${port}" \
+      --log-level "$LOG_LEVEL" \
+      --log-format console \
+      >"$logf" 2>&1 &
+    local pid="$!"
+    NODE_LEDGER_GNOKMS_PID[$node]="$pid"
+    NODE_LEDGER_HOST_PORT[$node]="$port"
+    NODE_LEDGER_LOG_FILE[$node]="$logf"
+    disown "$pid" 2>/dev/null || true
+
+    local i pubkey="" address=""
+    for i in $(seq 1 "$GNOKMS_LEDGER_TIMEOUT"); do
+      if ! kill -0 "$pid" 2>/dev/null; then
+        die "host gnokms-ledger exited before publishing a pubkey; see ${logf}"
+      fi
+      pubkey="$(grep -E '^[[:space:]]+pub_key:[[:space:]]+gpub' "$logf" 2>/dev/null | head -1 | awk '{print $2}')"
+      address="$(grep -E '^[[:space:]]+address:[[:space:]]+g1' "$logf" 2>/dev/null | head -1 | awk '{print $2}')"
+      if [ -n "$pubkey" ] && [ -n "$address" ]; then
+        break
+      fi
+      sleep 1
+    done
+
+    [ -n "$pubkey" ] && [ -n "$address" ] || die "did not see ledger pubkey within ${GNOKMS_LEDGER_TIMEOUT}s; see ${logf}"
+
+    NODE_PUBKEY[$node]="$pubkey"
+    NODE_ADDRESS[$node]="$address"
+    log "ledger pubkey for ${node}: ${address}"
+  done
+}
+
+stop_host_gnokms_ledger() {
+  local node
+  for node in "${SCENARIO_VALIDATORS[@]+"${SCENARIO_VALIDATORS[@]}"}"; do
+    local pid="${NODE_LEDGER_GNOKMS_PID[$node]:-}"
+    [ -n "$pid" ] || continue
+    kill "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+    NODE_LEDGER_GNOKMS_PID[$node]=""
+  done
+}
+
 populate_gnokms_keybases() {
   local signer
   for signer in "${SCENARIO_SIGNERS[@]+"${SCENARIO_SIGNERS[@]}"}"; do
@@ -686,6 +785,7 @@ prepare_network() {
 
   init_node_dirs
   collect_node_ids
+  discover_ledger_pubkeys
   generate_genesis
   configure_nodes
   populate_gnokms_keybases
@@ -856,6 +956,11 @@ start_all_nodes() {
         compose up -d "$gnokms_service" >/dev/null
         _capture_node_logs "$gnokms_service"
         log "started ${gnokms_service}"
+      fi
+      if [ "${NODE_LEDGER_BACKED[$node]:-false}" = "true" ]; then
+        local ledger_pid="${NODE_LEDGER_GNOKMS_PID[$node]:-}"
+        [ -n "$ledger_pid" ] && kill -0 "$ledger_pid" 2>/dev/null \
+          || die "host gnokms-ledger for ${node} is not running; see ${NODE_LEDGER_LOG_FILE[$node]:-<no log>}"
       fi
       signer_service="${NODE_SIGNER_SERVICE[$node]}"
       compose up -d "$signer_service" >/dev/null
@@ -1037,8 +1142,10 @@ print_signer_metrics() {
   [ "${NODE_CONTROLLABLE_SIGNER[$node]:-false}" = "true" ] || die "validator ${node} does not have a controllable signer"
 
   local backend_label="local"
-  if [ "${NODE_GNOKMS_BACKED[$node]:-false}" = "true" ]; then
-    backend_label="gnokms"
+  if [ "${NODE_LEDGER_BACKED[$node]:-false}" = "true" ]; then
+    backend_label="gnokms+ledger"
+  elif [ "${NODE_GNOKMS_BACKED[$node]:-false}" = "true" ]; then
+    backend_label="gnokms+gnokey"
   fi
 
   local state
@@ -1413,6 +1520,7 @@ scenario_finish() {
     log "leaving network running because KEEP_UP=1"
     return 0
   fi
+  stop_host_gnokms_ledger
   if [ -f "$COMPOSE_FILE" ]; then
     compose down --remove-orphans >/dev/null 2>&1 || true
   fi
