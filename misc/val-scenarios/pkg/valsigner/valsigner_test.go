@@ -76,6 +76,42 @@ func TestRuleMatches(t *testing.T) {
 	}
 }
 
+func TestRecordSignLatency(t *testing.T) {
+	t.Parallel()
+
+	c := NewController()
+	c.RecordSignLatency(PhaseProposal, 10*time.Millisecond)
+	c.RecordSignLatency(PhaseProposal, 30*time.Millisecond)
+	c.RecordSignLatency(PhasePrevote, 5*time.Millisecond)
+	// Unknown phase should be ignored.
+	c.RecordSignLatency(Phase("unknown"), 100*time.Millisecond)
+
+	_, stats := c.Snapshot()
+
+	prop := stats[PhaseProposal]
+	if prop.SignCount != 2 {
+		t.Fatalf("proposal SignCount = %d, want 2", prop.SignCount)
+	}
+	if prop.TotalNs != int64((40 * time.Millisecond).Nanoseconds()) {
+		t.Fatalf("proposal TotalNs = %d, want %d", prop.TotalNs, (40 * time.Millisecond).Nanoseconds())
+	}
+	if prop.MinNs != int64((10 * time.Millisecond).Nanoseconds()) {
+		t.Fatalf("proposal MinNs = %d, want %d", prop.MinNs, (10 * time.Millisecond).Nanoseconds())
+	}
+	if prop.MaxNs != int64((30 * time.Millisecond).Nanoseconds()) {
+		t.Fatalf("proposal MaxNs = %d, want %d", prop.MaxNs, (30 * time.Millisecond).Nanoseconds())
+	}
+
+	pre := stats[PhasePrevote]
+	if pre.SignCount != 1 {
+		t.Fatalf("prevote SignCount = %d, want 1", pre.SignCount)
+	}
+
+	if stats[PhasePrecommit].SignCount != 0 {
+		t.Fatalf("precommit SignCount = %d, want 0", stats[PhasePrecommit].SignCount)
+	}
+}
+
 func TestParseRuleRequest(t *testing.T) {
 	t.Parallel()
 
