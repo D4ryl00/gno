@@ -1152,20 +1152,23 @@ print_signer_metrics() {
   state="$(signer_state "$node")"
 
   printf '\n=== signer metrics: %s (backend=%s) ===\n' "$node" "$backend_label"
-  printf '%-10s %8s %12s %12s %12s\n' phase count avg_us min_us max_us
+  printf '%-10s %8s %12s %12s %12s\n' phase count avg_ms min_ms max_ms
   printf '%s' "$state" | jq -r '
     ["proposal","prevote","precommit"][] as $phase |
     .stats[$phase] as $s |
     if ($s.sign_count // 0) > 0 then
       [$phase,
        ($s.sign_count | tostring),
-       (($s.total_ns / $s.sign_count / 1000) | floor | tostring),
-       (($s.min_ns / 1000) | floor | tostring),
-       (($s.max_ns / 1000) | floor | tostring)]
+       (($s.total_ns / $s.sign_count / 1000000) | tostring),
+       (($s.min_ns / 1000000) | tostring),
+       (($s.max_ns / 1000000) | tostring)]
     else
       [$phase, "0", "-", "-", "-"]
     end | @tsv
-  ' | awk -F '\t' '{ printf "%-10s %8s %12s %12s %12s\n", $1, $2, $3, $4, $5 }'
+  ' | awk -F '\t' '{
+    if ($2 == "0") printf "%-10s %8s %12s %12s %12s\n", $1, $2, $3, $4, $5
+    else printf "%-10s %8s %12.3f %12.3f %12.3f\n", $1, $2, $3, $4, $5
+  }'
 }
 
 print_all_signer_metrics() {
