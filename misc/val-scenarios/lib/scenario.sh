@@ -20,6 +20,8 @@ CHAIN_ID="${CHAIN_ID:-dev}"
 TIMEOUT_COMMIT="${TIMEOUT_COMMIT:-1s}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 REMOTE_SIGNER_REQUEST_TIMEOUT="${REMOTE_SIGNER_REQUEST_TIMEOUT:-30s}"
+GNOKMS_KEYBASE_PASSWORD="${GNOKMS_KEYBASE_PASSWORD:-scenario}"
+GNOKMS_KEYBASE_KEY_NAME="${GNOKMS_KEYBASE_KEY_NAME:-validator}"
 TX_KEY_NAME="${TX_KEY_NAME:-scenario-tx}"
 TX_PASSWORD="${TX_PASSWORD:-test123456}"
 TX_MNEMONIC="${TX_MNEMONIC:-source bonus chronic canvas draft south burst lottery vacant surface solve popular case indicate oppose farm nothing bullet exhibit title speed wink action roast}"
@@ -50,6 +52,8 @@ declare -A NODE_POWER=()
 declare -A NODE_CONTROLLABLE_SIGNER=()
 declare -A NODE_SIGNER_SERVICE=()
 declare -A NODE_CONTROL_PORT=()
+declare -A NODE_GNOKMS_BACKED=()
+declare -A NODE_GNOKMS_SERVICE=()
 declare -A NODE_LOG_PID=()
 
 SCENARIO_NAME=""
@@ -133,6 +137,8 @@ scenario_init() {
   NODE_CONTROLLABLE_SIGNER=()
   NODE_SIGNER_SERVICE=()
   NODE_CONTROL_PORT=()
+  NODE_GNOKMS_BACKED=()
+  NODE_GNOKMS_SERVICE=()
   NODE_LOG_PID=()
 }
 
@@ -175,6 +181,7 @@ gen_validator() {
   local pex="true"
   local power="1"
   local controllable_signer="false"
+  local gnokms_backed="false"
   local in_genesis="true"
 
   while [ "$#" -gt 0 ]; do
@@ -200,6 +207,11 @@ gen_validator() {
         controllable_signer="true"
         shift
         ;;
+      --gnokms-backed-signer)
+        controllable_signer="true"
+        gnokms_backed="true"
+        shift
+        ;;
       --not-in-genesis)
         in_genesis="false"
         shift
@@ -213,10 +225,14 @@ gen_validator() {
   register_node "$name" validator "$rpc_port" "$pex" "$sentry" "$in_genesis"
   NODE_POWER[$name]="$power"
   NODE_CONTROLLABLE_SIGNER[$name]="$controllable_signer"
+  NODE_GNOKMS_BACKED[$name]="$gnokms_backed"
   if [ "$controllable_signer" = "true" ]; then
     NODE_SIGNER_SERVICE[$name]="${name}-signer"
     NODE_CONTROL_PORT[$name]=""
     SCENARIO_SIGNERS+=("$name")
+  fi
+  if [ "$gnokms_backed" = "true" ]; then
+    NODE_GNOKMS_SERVICE[$name]="${name}-gnokms"
   fi
 }
 
@@ -547,12 +563,36 @@ write_compose_file() {
     printf 'services:\n'
     local node
     local signer
+    local gnokms_backed
     for signer in "${SCENARIO_SIGNERS[@]}"; do
+      gnokms_backed="${NODE_GNOKMS_BACKED[$signer]:-false}"
+      if [ "$gnokms_backed" = "true" ]; then
+        # Keybase mounted rw: gnokey opens leveldb with a write lock.
+        printf '  %s:\n' "${NODE_GNOKMS_SERVICE[$signer]}"
+        printf '    image: "%s"\n' "$GNOGENESIS_IMAGE"
+        printf '    entrypoint:\n'
+        printf '      - /bin/sh\n'
+        printf '    command:\n'
+        printf '      - -c\n'
+        printf '      - "echo %s | /usr/bin/gnokms gnokey %s --home /keys --listener tcp://0.0.0.0:26659 --insecure-password-stdin --log-level %s"\n' \
+          "$GNOKMS_KEYBASE_PASSWORD" "$GNOKMS_KEYBASE_KEY_NAME" "$LOG_LEVEL"
+        printf '    volumes:\n'
+        printf '      - "%s/gnokms-keys:/keys"\n' "${NODE_DATA_DIR[$signer]}"
+        printf '    networks:\n'
+        printf '      - chain\n'
+        printf '    stop_grace_period: 5s\n'
+      fi
+
       printf '  %s:\n' "${NODE_SIGNER_SERVICE[$signer]}"
       printf '    image: "%s"\n' "$VALSIGNER_IMAGE"
       printf '    command:\n'
-      printf '      - --key-file\n'
-      printf '      - /data/secrets/priv_validator_key.json\n'
+      if [ "$gnokms_backed" = "true" ]; then
+        printf '      - --gnokms-addr\n'
+        printf '      - tcp://%s:26659\n' "${NODE_GNOKMS_SERVICE[$signer]}"
+      else
+        printf '      - --key-file\n'
+        printf '      - /data/secrets/priv_validator_key.json\n'
+      fi
       printf '      - --listen-addr\n'
       printf '      - :8080\n'
       printf '      - --remote-signer-addr\n'
@@ -568,6 +608,10 @@ write_compose_file() {
       printf '    networks:\n'
       printf '      - chain\n'
       printf '    stop_grace_period: 5s\n'
+      if [ "$gnokms_backed" = "true" ]; then
+        printf '    depends_on:\n'
+        printf '      - %s\n' "${NODE_GNOKMS_SERVICE[$signer]}"
+      fi
     done
 
     for node in "${SCENARIO_NODES[@]}"; do
@@ -605,6 +649,21 @@ write_compose_file() {
   } > "$COMPOSE_FILE"
 }
 
+populate_gnokms_keybases() {
+  local signer
+  for signer in "${SCENARIO_SIGNERS[@]+"${SCENARIO_SIGNERS[@]}"}"; do
+    [ "${NODE_GNOKMS_BACKED[$signer]:-false}" = "true" ] || continue
+    docker run --rm \
+      --entrypoint /usr/bin/valkeyimport \
+      -v "${NODE_DATA_DIR[$signer]}:/data" \
+      "$VALSIGNER_IMAGE" \
+      --priv-validator-key /data/secrets/priv_validator_key.json \
+      --keybase-dir /data/gnokms-keys \
+      --key-name "$GNOKMS_KEYBASE_KEY_NAME" \
+      --password "$GNOKMS_KEYBASE_PASSWORD" >/dev/null
+  done
+}
+
 create_tx_key() {
   mkdir -p "$KEY_HOME"
   if find "$KEY_HOME" -mindepth 1 -print -quit | grep -q .; then
@@ -629,6 +688,7 @@ prepare_network() {
   collect_node_ids
   generate_genesis
   configure_nodes
+  populate_gnokms_keybases
   write_compose_file
   create_tx_key
 
@@ -789,7 +849,14 @@ start_all_nodes() {
 
   if [ "${#SCENARIO_SIGNERS[@]}" -gt 0 ]; then
     local signer_service
+    local gnokms_service
     for node in "${SCENARIO_SIGNERS[@]}"; do
+      if [ "${NODE_GNOKMS_BACKED[$node]:-false}" = "true" ]; then
+        gnokms_service="${NODE_GNOKMS_SERVICE[$node]}"
+        compose up -d "$gnokms_service" >/dev/null
+        _capture_node_logs "$gnokms_service"
+        log "started ${gnokms_service}"
+      fi
       signer_service="${NODE_SIGNER_SERVICE[$node]}"
       compose up -d "$signer_service" >/dev/null
       _resolve_control_port "$node"
@@ -963,6 +1030,42 @@ signer_delay() {
   curl -fsS -X PUT -H 'Content-Type: application/json' --data "$payload" \
     "$(node_control_url "$node")/rules/${phase}" >/dev/null
   log "configured signer delay on ${node} phase=${phase} delay=${delay} height=${height:-*} round=${round:-*}"
+}
+
+print_signer_metrics() {
+  local node="${1:?validator required}"
+  [ "${NODE_CONTROLLABLE_SIGNER[$node]:-false}" = "true" ] || die "validator ${node} does not have a controllable signer"
+
+  local backend_label="local"
+  if [ "${NODE_GNOKMS_BACKED[$node]:-false}" = "true" ]; then
+    backend_label="gnokms"
+  fi
+
+  local state
+  state="$(signer_state "$node")"
+
+  printf '\n=== signer metrics: %s (backend=%s) ===\n' "$node" "$backend_label"
+  printf '%-10s %8s %12s %12s %12s\n' phase count avg_us min_us max_us
+  printf '%s' "$state" | jq -r '
+    ["proposal","prevote","precommit"][] as $phase |
+    .stats[$phase] as $s |
+    if ($s.sign_count // 0) > 0 then
+      [$phase,
+       ($s.sign_count | tostring),
+       (($s.total_ns / $s.sign_count / 1000) | floor | tostring),
+       (($s.min_ns / 1000) | floor | tostring),
+       (($s.max_ns / 1000) | floor | tostring)]
+    else
+      [$phase, "0", "-", "-", "-"]
+    end | @tsv
+  ' | awk -F '\t' '{ printf "%-10s %8s %12s %12s %12s\n", $1, $2, $3, $4, $5 }'
+}
+
+print_all_signer_metrics() {
+  local node
+  for node in "${SCENARIO_SIGNERS[@]+"${SCENARIO_SIGNERS[@]}"}"; do
+    print_signer_metrics "$node"
+  done
 }
 
 signer_clear() {

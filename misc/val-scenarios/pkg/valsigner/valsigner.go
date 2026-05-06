@@ -12,7 +12,6 @@ import (
 
 	"github.com/gnolang/gno/tm2/pkg/amino"
 	rssrv "github.com/gnolang/gno/tm2/pkg/bft/privval/signer/remote/server"
-	"github.com/gnolang/gno/tm2/pkg/bft/privval/signer/local"
 	"github.com/gnolang/gno/tm2/pkg/bft/types"
 	"github.com/gnolang/gno/tm2/pkg/crypto"
 )
@@ -69,6 +68,12 @@ type PhaseStats struct {
 	Dropped   int64      `json:"dropped"`
 	Delayed   int64      `json:"delayed"`
 	LastMatch *TargetHit `json:"last_match,omitempty"`
+
+	// Inner Sign() latency. Excludes drops (no inner sign) and delay sleeps.
+	SignCount int64 `json:"sign_count"`
+	TotalNs   int64 `json:"total_ns"`
+	MinNs     int64 `json:"min_ns"`
+	MaxNs     int64 `json:"max_ns"`
 }
 
 type TargetHit struct {
@@ -203,6 +208,31 @@ func (c *Controller) Snapshot() (map[Phase]*RuleView, map[Phase]PhaseStats) {
 	return rules, stats
 }
 
+// RecordSignLatency silently ignores phases outside proposal/prevote/precommit.
+func (c *Controller) RecordSignLatency(phase Phase, d time.Duration) {
+	switch phase {
+	case PhaseProposal, PhasePrevote, PhasePrecommit:
+	default:
+		return
+	}
+
+	ns := d.Nanoseconds()
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	stat := c.stats[phase]
+	if stat.SignCount == 0 || ns < stat.MinNs {
+		stat.MinNs = ns
+	}
+	if ns > stat.MaxNs {
+		stat.MaxNs = ns
+	}
+	stat.SignCount++
+	stat.TotalNs += ns
+	c.stats[phase] = stat
+}
+
 func (c *Controller) Evaluate(target SignedTarget) (Rule, bool) {
 	c.mu.RLock()
 	rule, ok := c.rules[target.Phase]
@@ -256,8 +286,9 @@ func (c *ControllableSigner) PubKey() crypto.PubKey {
 }
 
 func (c *ControllableSigner) Sign(signBytes []byte) ([]byte, error) {
-	target, err := ClassifySignBytes(signBytes)
-	if err == nil {
+	target, classifyErr := ClassifySignBytes(signBytes)
+	switch {
+	case classifyErr == nil:
 		if rule, ok := c.controller.Evaluate(target); ok {
 			switch rule.Action {
 			case ActionDrop:
@@ -277,11 +308,16 @@ func (c *ControllableSigner) Sign(signBytes []byte) ([]byte, error) {
 				time.Sleep(rule.Delay)
 			}
 		}
-	} else if !errors.Is(err, ErrUnknownSignBytes) {
-		c.logger.Warn("unable to inspect sign bytes", "err", err)
+	case !errors.Is(classifyErr, ErrUnknownSignBytes):
+		c.logger.Warn("unable to inspect sign bytes", "err", classifyErr)
 	}
 
-	return c.signer.Sign(signBytes)
+	start := time.Now()
+	sig, err := c.signer.Sign(signBytes)
+	if classifyErr == nil && err == nil {
+		c.controller.RecordSignLatency(target.Phase, time.Since(start))
+	}
+	return sig, err
 }
 
 func (c *ControllableSigner) Close() error {
@@ -329,12 +365,12 @@ type Server struct {
 	signer       *ControllableSigner
 }
 
-func NewServer(keyFile, controlAddr, remoteAddr string, logger *slog.Logger) (*Server, error) {
+func NewServer(inner types.Signer, controlAddr, remoteAddr string, logger *slog.Logger) (*Server, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	if keyFile == "" {
-		return nil, errors.New("key file is required")
+	if inner == nil {
+		return nil, errors.New("inner signer is required")
 	}
 	if controlAddr == "" {
 		return nil, errors.New("control address is required")
@@ -343,13 +379,8 @@ func NewServer(keyFile, controlAddr, remoteAddr string, logger *slog.Logger) (*S
 		return nil, errors.New("remote signer address is required")
 	}
 
-	localSigner, err := local.LoadOrMakeLocalSigner(keyFile)
-	if err != nil {
-		return nil, fmt.Errorf("load signer key: %w", err)
-	}
-
 	controller := NewController()
-	signer := NewControllableSigner(localSigner, controller, logger.With("component", "controllable-signer"))
+	signer := NewControllableSigner(inner, controller, logger.With("component", "controllable-signer"))
 
 	signerServer, err := rssrv.NewRemoteSignerServer(
 		signer,

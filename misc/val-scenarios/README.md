@@ -117,13 +117,15 @@ All scenario scripts live in `scenarios/`. Each script declares whether it shoul
 - `scenarios/14_four_validators_drop_proposals_with_signers.sh`: 4 validators with controllable signer sidecars; drop proposal signatures on all validators and assert consensus resumes after clearing the rules
 - `scenarios/15_four_validators_drop_prevotes_thresholds.sh`: 4 validators with controllable signer sidecars; drop prevotes below and above quorum thresholds
 - `scenarios/16_four_validators_precommit_delays_thresholds.sh`: 4 validators with controllable signer sidecars; delay precommits below and above `timeout_commit`
+- `scenarios/18_signer_latency_baseline.sh`: 4 validators with controllable signer sidecars (local backend); run for `TARGET_BLOCKS` blocks (default 100) and print per-phase Sign() latency
+- `scenarios/19_signer_latency_with_gnokms.sh`: same as 18 but with a `gnokms` sidecar in front of each signer (filekey backend); the latency delta vs scenario 18 is the gnokms overlay cost
 
 ## Reusable Scenario API
 
 Scenarios source `lib/scenario.sh` and use a small set of helpers:
 
 - `scenario_init <name>`
-- `gen_validator <name> [--rpc-port <port>] [--sentry <sentry-name>] [--controllable-signer] [--not-in-genesis]`
+- `gen_validator <name> [--rpc-port <port>] [--sentry <sentry-name>] [--controllable-signer | --gnokms-backed-signer] [--not-in-genesis]`
 - `gen_sentry <name> [--rpc-port <port>]`
 - `prepare_network`
 - `start_all_nodes`
@@ -139,6 +141,8 @@ Scenarios source `lib/scenario.sh` and use a small set of helpers:
 - `signer_drop <validator> proposal|prevote|precommit [height] [round]`
 - `signer_delay <validator> proposal|prevote|precommit <duration> [height] [round]`
 - `signer_clear <validator> [phase]`
+- `print_signer_metrics <validator>`
+- `print_all_signer_metrics`
 - `rotate_sentry_ip <sentry-name>`
 - `print_cluster_status`
 
@@ -171,6 +175,20 @@ The sidecar currently supports live rules for:
 - optional height / round scoping
 
 This approach does not modify vote contents or proposal contents. It controls whether a validator signs, and when.
+
+The sidecar also records per-phase Sign() latency (count, total, min, max) for the inner signer call. Stats are exposed on `/state` and can be printed with `print_signer_metrics <validator>` or `print_all_signer_metrics` at the end of a scenario.
+
+## gnokms-Backed Signers
+
+Pass `--gnokms-backed-signer` to `gen_validator` to put a `gnokms` sidecar (`gnokey` backend, from `GNOGENESIS_IMAGE`) between the controllable signer and the validator key. The chain becomes:
+
+```text
+validator -> valsignerd (metrics) -> gnokms -> gnokey keybase
+```
+
+`gnokms` upstream only ships the `gnokey` backend, which reads from a gnokey keybase. To avoid modifying gnokms, `prepare_network` runs the `valkeyimport` helper (built into the `valsignerd` image) once per gnokms-backed validator: it reads `priv_validator_key.json` and imports the ed25519 priv key into a fresh keybase under `<node>/gnokms-keys`. The `gnokms` sidecar is then started with `gnokms gnokey <key-name> --home /keys --insecure-password-stdin`, fed the keybase password (`GNOKMS_KEYBASE_PASSWORD`, default `scenario`) on stdin.
+
+Use this to measure the gnokms overlay cost: run an identical scenario with `--controllable-signer` and `--gnokms-backed-signer` and subtract the per-phase Sign() latencies. See `scenarios/18_signer_latency_baseline.sh` and `scenarios/19_signer_latency_with_gnokms.sh`.
 
 Example live control commands against a running scenario:
 

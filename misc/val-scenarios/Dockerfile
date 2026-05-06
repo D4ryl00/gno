@@ -24,13 +24,15 @@ RUN { git describe --tags --exact-match 2>/dev/null \
 
 RUN --mount=type=cache,target=/go/pkg/mod/,id=valsignerd-gomodcache \
     --mount=type=cache,target=/root/.cache/go-build,id=valsignerd-gobuildcache \
-    go build -ldflags "-w -s -X github.com/gnolang/gno/tm2/pkg/version.Version=$(cat /gnoroot/build_version)" -o /out/valsignerd ./misc/val-scenarios/cmd/valsignerd
+    go build -ldflags "-w -s -X github.com/gnolang/gno/tm2/pkg/version.Version=$(cat /gnoroot/build_version)" -o /out/valsignerd ./misc/val-scenarios/cmd/valsignerd \
+ && go build -ldflags "-w -s" -o /out/valkeyimport ./misc/val-scenarios/cmd/valkeyimport
 
 FROM alpine:3 AS valsignerd
 
 RUN apk add --no-cache ca-certificates
 
 COPY --from=build /out/valsignerd /usr/bin/valsignerd
+COPY --from=build /out/valkeyimport /usr/bin/valkeyimport
 
 EXPOSE 8080 26659
 ENTRYPOINT ["/usr/bin/valsignerd"]
