@@ -2,6 +2,8 @@ package gnokey
 
 import (
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/gnolang/gno/tm2/pkg/bft/types"
 	"github.com/gnolang/gno/tm2/pkg/commands"
@@ -14,6 +16,7 @@ type gnokeySigner struct {
 	keyBase  keys.Keybase
 	keyInfo  keys.Info
 	password string
+	logger   *slog.Logger
 }
 
 // gnokeySigner type implements types.Signer.
@@ -26,13 +29,26 @@ func (gk *gnokeySigner) PubKey() crypto.PubKey {
 
 // Sign implements types.Signer.
 func (gk *gnokeySigner) Sign(signBytes []byte) ([]byte, error) {
+	gk.logger.Info("sign request received", "bytes", len(signBytes))
+	start := time.Now()
+
 	signature, _, err := gk.keyBase.Sign(gk.keyInfo.GetName(), gk.password, signBytes)
-	return signature, err
+	if err != nil {
+		return nil, err
+	}
+
+	gk.logger.Info("signature produced by gnokey", "duration", time.Since(start))
+	return signature, nil
 }
 
 // Close implements types.Signer.
 func (gk *gnokeySigner) Close() error {
+	gk.logger.Info("closing gnokey keybase")
+	start := time.Now()
+
 	gk.keyBase.CloseDB()
+
+	gk.logger.Info("gnokey keybase closed", "duration", time.Since(start))
 	return nil
 }
 
@@ -41,16 +57,24 @@ func (gk *gnokeySigner) Close() error {
 func newGnokeySigner(
 	gnFlags *gnokeyFlags,
 	keyName string,
+	logger *slog.Logger,
 	io commands.IO,
 ) (*gnokeySigner, error) {
+	logger.Info("opening gnokey keybase")
+	start := time.Now()
+
 	// Load the keybase located at the home directory.
 	keyBase, _ := keys.NewKeyBaseFromDir(gnFlags.home)
+	logger.Info("gnokey keybase opened", "duration", time.Since(start))
 
+	logger.Info("fetching key info from gnokey", "key", keyName)
+	start = time.Now()
 	// Get the key info from the keybase.
 	info, err := keyBase.GetByNameOrAddress(keyName)
 	if err != nil {
 		return nil, fmt.Errorf("unable to get key from keybase: %w", err)
 	}
+	logger.Info("key info received from gnokey", "duration", time.Since(start), "type", info.GetType())
 
 	var password string
 
@@ -68,10 +92,13 @@ func newGnokeySigner(
 			}
 
 			// Check if the password is correct.
+			logger.Info("validating gnokey password")
+			start = time.Now()
 			if _, _, err = keyBase.Sign(keyName, password, []byte{}); err != nil {
 				io.ErrPrintln("Invalid password, try again\n")
 				continue
 			}
+			logger.Info("gnokey password validated", "duration", time.Since(start))
 
 			break
 		}
@@ -85,5 +112,6 @@ func newGnokeySigner(
 		keyBase:  keyBase,
 		keyInfo:  info,
 		password: password,
+		logger:   logger,
 	}, nil
 }

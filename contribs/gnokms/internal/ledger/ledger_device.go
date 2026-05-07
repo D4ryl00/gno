@@ -3,7 +3,9 @@ package ledger
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
+	"time"
 
 	"github.com/zondax/hid"
 	ledger_go "github.com/zondax/ledger-go"
@@ -36,10 +38,11 @@ func (v ledgerAppVersion) meetsMinimum(minimum ledgerAppVersion) bool {
 }
 
 type tendermintLedger struct {
-	api ledger_go.LedgerDevice
+	api    ledger_go.LedgerDevice
+	logger *slog.Logger
 }
 
-func openTendermintLedger() (*tendermintLedger, error) {
+func openTendermintLedger(logger *slog.Logger) (*tendermintLedger, error) {
 	if !hid.Supported() {
 		return nil, errors.New("ledger support is not enabled, try building with CGO_ENABLED=1")
 	}
@@ -50,7 +53,42 @@ func openTendermintLedger() (*tendermintLedger, error) {
 		return nil, err
 	}
 
-	return &tendermintLedger{api: ledgerAPI}, nil
+	return &tendermintLedger{api: ledgerAPI, logger: logger}, nil
+}
+
+// benchmarkGetVersion runs getVersion n times to measure the host↔device APDU
+// round-trip latency without any on-device crypto. Compare with sign latency to
+// distinguish transport overhead from on-device signing time.
+func (ledger *tendermintLedger) benchmarkGetVersion(n int) {
+	if ledger.logger == nil || n <= 0 {
+		return
+	}
+
+	var minD, maxD, total time.Duration
+	for i := 0; i < n; i++ {
+		start := time.Now()
+		_, err := ledger.getVersion()
+		d := time.Since(start)
+		if err != nil {
+			ledger.logger.Warn("getVersion benchmark error", "iteration", i, "err", err)
+			return
+		}
+		ledger.logger.Debug("getVersion benchmark iteration", "iteration", i, "duration", d)
+		total += d
+		if i == 0 || d < minD {
+			minD = d
+		}
+		if d > maxD {
+			maxD = d
+		}
+	}
+
+	ledger.logger.Info("getVersion benchmark",
+		"iterations", n,
+		"min", minD,
+		"max", maxD,
+		"avg", total/time.Duration(n),
+	)
 }
 
 func (ledger *tendermintLedger) Close() error {

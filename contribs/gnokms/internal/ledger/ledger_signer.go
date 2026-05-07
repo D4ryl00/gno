@@ -47,7 +47,20 @@ func (ledger *tendermintLedger) signED25519(message []byte) ([]byte, error) {
 
 		apduMessage := append(header, message[:chunk]...)
 
+		exchangeStart := time.Now()
 		response, err := ledger.api.Exchange(apduMessage)
+		exchangeDuration := time.Since(exchangeStart)
+
+		if ledger.logger != nil {
+			ledger.logger.Debug("apdu exchange",
+				"ins", "signED25519",
+				"chunk", packetIndex,
+				"of", packetCount,
+				"size", len(apduMessage),
+				"duration", exchangeDuration,
+			)
+		}
+
 		if err != nil {
 			return nil, formatLedgerError(err, response)
 		}
@@ -128,7 +141,7 @@ func newLedgerSigner(logger *slog.Logger) (*ledgerSigner, error) {
 	logger.Info("opening ledger connection")
 	start := time.Now()
 
-	ledger, err := openTendermintLedger()
+	ledger, err := openTendermintLedger(logger)
 	if err != nil {
 		return nil, fmt.Errorf("unable to connect to Ledger Tendermint validator app: %w", err)
 	}
@@ -141,6 +154,10 @@ func newLedgerSigner(logger *slog.Logger) (*ledgerSigner, error) {
 		return nil, err
 	}
 	logger.Info("ledger app version validated", "duration", time.Since(start))
+
+	// Baseline benchmark: measure host↔device APDU round-trip with no on-device
+	// crypto. The avg here is the floor for any sign latency on the same connection.
+	ledger.benchmarkGetVersion(10)
 
 	logger.Info("fetching public key from ledger")
 	start = time.Now()

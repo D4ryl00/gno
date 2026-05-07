@@ -2,6 +2,7 @@ package common
 
 import (
 	"fmt"
+	"io"
 	"log/slog"
 
 	"github.com/gnolang/gno/gno.land/pkg/log"
@@ -11,10 +12,15 @@ import (
 // Used to flush the logger.
 type logFlusher func()
 
-func LoggerFromServerFlags(serverFlags *ServerFlags, io commands.IO) (*slog.Logger, logFlusher, error) {
+func LoggerFromServerFlags(serverFlags *ServerFlags, cmdIO commands.IO) (*slog.Logger, logFlusher, error) {
+	out := cmdIO.Out()
+	if out == nil {
+		out = commands.WriteNopCloser(io.Discard)
+	}
+
 	// Initialize the zap logger.
 	zapLogger, err := log.InitializeZapLogger(
-		io.Out(),
+		out,
 		serverFlags.LogLevel,
 		serverFlags.LogFormat,
 	)

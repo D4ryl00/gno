@@ -66,12 +66,17 @@ func execGnokey(ctx context.Context, args []string, gnFlags *gnokeyFlags, io com
 	}
 	keyName := args[0]
 
+	logger, flusher, err := common.LoggerFromServerFlags(&gnFlags.ServerFlags, io)
+	if err != nil {
+		return err
+	}
+
 	// Initialize the gnokey signer with the provided key name.
-	gnokeySigner, err := newGnokeySigner(gnFlags, keyName, io)
+	gnokeySigner, err := newGnokeySigner(gnFlags, keyName, logger, io)
 	if err != nil {
 		return err
 	}
 
 	// Run the remote signer server with the gnokey signer.
-	return common.RunSignerServer(ctx, &gnFlags.ServerFlags, gnokeySigner, io)
+	return common.RunSignerServerWithLogger(ctx, &gnFlags.ServerFlags, gnokeySigner, logger, flusher, io)
 }

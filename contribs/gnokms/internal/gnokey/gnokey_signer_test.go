@@ -9,6 +9,7 @@ import (
 	"github.com/gnolang/gno/tm2/pkg/commands"
 	"github.com/gnolang/gno/tm2/pkg/crypto/ed25519"
 	"github.com/gnolang/gno/tm2/pkg/crypto/keys"
+	"github.com/gnolang/gno/tm2/pkg/log"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -43,6 +44,7 @@ func TestNewGnokeySigner(t *testing.T) {
 		signer, err := newGnokeySigner(
 			&gnokeyFlags{home: filePath},
 			"unknown",
+			log.NewNoopLogger(),
 			commands.NewTestIO(),
 		)
 		require.Nil(t, signer)
@@ -66,6 +68,7 @@ func TestNewGnokeySigner(t *testing.T) {
 				insecurePasswordStdin: true,
 			},
 			keyName,
+			log.NewNoopLogger(),
 			io,
 		)
 		require.NotNil(t, signer)
@@ -89,6 +92,7 @@ func TestNewGnokeySigner(t *testing.T) {
 				insecurePasswordStdin: true,
 			},
 			keyName,
+			log.NewNoopLogger(),
 			io,
 		)
 		require.Nil(t, signer)
@@ -117,6 +121,7 @@ func TestNewGnokeySigner(t *testing.T) {
 				insecurePasswordStdin: true,
 			},
 			"offline",
+			log.NewNoopLogger(),
 			io,
 		)
 		require.Nil(t, signer)
@@ -140,6 +145,7 @@ func TestNewGnokeySigner(t *testing.T) {
 				insecurePasswordStdin: true,
 			},
 			keyName,
+			log.NewNoopLogger(),
 			io,
 		)
 		require.NotNil(t, signer)
