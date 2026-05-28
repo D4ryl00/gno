@@ -5,13 +5,13 @@ SCENARIO_CI=false
 
 # 4 validators with controllable signer sidecars (local backend).
 # Run for ~100 blocks and print per-phase Sign() latency on each validator.
-# This is the baseline measurement to compare against scenario 19, which puts
+# This is the baseline measurement to compare against scenario 20, which puts
 # gnokms in front of the same controllable signer.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/lib/scenario.sh"
 
-scenario_init "scenario-18"
+scenario_init "scenario-19"
 trap scenario_finish EXIT
 
 TARGET_BLOCKS="${TARGET_BLOCKS:-100}"

@@ -21,7 +21,7 @@ SCENARIO_CI=false
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/lib/scenario.sh"
 
-scenario_init "scenario-20"
+scenario_init "scenario-21"
 trap scenario_finish EXIT
 
 TARGET_BLOCKS="${TARGET_BLOCKS:-100}"

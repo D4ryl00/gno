@@ -116,7 +116,7 @@ build-valsigner-image: $(_FETCH_PREREQ)
 
 build-images: build-core-image build-gnogenesis-image build-valsigner-image
 
-# Host-side gnokms binary with ledger support, for scenario 20.
+# Host-side gnokms binary with ledger support, for scenario 21.
 # Uses a git worktree so the local repo's currently checked-out branch is
 # untouched. Requires CGO_ENABLED=1 (xcode CLI tools on macOS, gcc + libusb
 # headers on Linux).

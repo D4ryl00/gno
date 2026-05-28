@@ -50,6 +50,7 @@ declare -A NODE_SENTRY=()
 declare -A NODE_ID=()
 declare -A NODE_ADDRESS=()
 declare -A NODE_PUBKEY=()
+declare -A NODE_VALIDATOR_KEY_TYPE=()
 declare -A NODE_DATA_DIR=()
 declare -A NODE_POWER=()
 declare -A NODE_CONTROLLABLE_SIGNER=()
@@ -150,6 +151,7 @@ scenario_init() {
   NODE_ID=()
   NODE_ADDRESS=()
   NODE_PUBKEY=()
+  NODE_VALIDATOR_KEY_TYPE=()
   NODE_DATA_DIR=()
   NODE_POWER=()
   NODE_CONTROLLABLE_SIGNER=()
@@ -202,6 +204,7 @@ gen_validator() {
   local sentry=""
   local pex="true"
   local power="1"
+  local validator_key_type="ed25519"
   local controllable_signer="false"
   local gnokms_backed="false"
   local ledger_backed="false"
@@ -224,6 +227,10 @@ gen_validator() {
         ;;
       --power)
         power="${2:?missing power value}"
+        shift 2
+        ;;
+      --validator-key-type|--key-type)
+        validator_key_type="${2:?missing validator key type}"
         shift 2
         ;;
       --controllable-signer)
@@ -256,6 +263,11 @@ gen_validator() {
 
   register_node "$name" validator "$rpc_port" "$pex" "$sentry" "$in_genesis"
   NODE_POWER[$name]="$power"
+  case "$validator_key_type" in
+    ed25519|secp256k1) ;;
+    *) die "validator ${name}: unsupported validator key type ${validator_key_type}" ;;
+  esac
+  NODE_VALIDATOR_KEY_TYPE[$name]="$validator_key_type"
   NODE_CONTROLLABLE_SIGNER[$name]="$controllable_signer"
   NODE_GNOKMS_BACKED[$name]="$gnokms_backed"
   NODE_LEDGER_BACKED[$name]="$ledger_backed"
@@ -332,7 +344,12 @@ init_node_dirs() {
     NODE_DATA_DIR[$node]="$node_dir"
     mkdir -p "$node_dir"
 
-    run_in_image -v "${node_dir}:/data" "$IMAGE_NAME" secrets init --data-dir /data/secrets >/dev/null
+    local key_type="${NODE_VALIDATOR_KEY_TYPE[$node]:-ed25519}"
+    if [ "$key_type" = "ed25519" ]; then
+      run_in_image -v "${node_dir}:/data" "$IMAGE_NAME" secrets init --data-dir /data/secrets >/dev/null
+    else
+      run_in_image -v "${node_dir}:/data" "$IMAGE_NAME" secrets init --data-dir /data/secrets --key-type "$key_type" >/dev/null
+    fi
     run_in_image -v "${node_dir}:/data" "$IMAGE_NAME" config init --config-path /data/config/config.toml >/dev/null
   done
 }
@@ -874,6 +891,7 @@ write_inventory() {
         --arg signer_service "${NODE_SIGNER_SERVICE[$node]:-}" \
         --arg address "${NODE_ADDRESS[$node]}" \
         --arg pubkey "${NODE_PUBKEY[$node]}" \
+        --arg validator_key_type "${NODE_VALIDATOR_KEY_TYPE[$node]:-ed25519}" \
         --argjson controllable "$( [ "${NODE_CONTROLLABLE_SIGNER[$node]:-false}" = "true" ] && printf 'true' || printf 'false' )" \
         --argjson control_url "$control_url" \
         '$current + [{
@@ -884,7 +902,8 @@ write_inventory() {
           signer_service: $signer_service,
           controllable_signer: $controllable,
           address: $address,
-          pub_key: $pubkey
+          pub_key: $pubkey,
+          validator_key_type: $validator_key_type
         }]' \
     )"
   done

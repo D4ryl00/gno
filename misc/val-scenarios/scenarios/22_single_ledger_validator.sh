@@ -7,8 +7,8 @@ SCENARIO_CI=false
 # proposal/prevote/precommit goes through gnokms+ledger. The per-phase Sign()
 # latency on val1 is then the unmixed gnokms+ledger cost (no peer waiting).
 #
-# Compare against scenario 18 (single signer, no gnokms) to get the full
-# overlay; against scenario 19 (gnokms+gnokey) to isolate the ledger device
+# Compare against scenario 19 (single signer, no gnokms) to get the full
+# overlay; against scenario 20 (gnokms+gnokey) to isolate the ledger device
 # cost.
 #
 # Prerequisites:
@@ -22,7 +22,7 @@ SCENARIO_CI=false
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "${ROOT_DIR}/lib/scenario.sh"
 
-scenario_init "scenario-21"
+scenario_init "scenario-22"
 trap scenario_finish EXIT
 
 TARGET_BLOCKS="${TARGET_BLOCKS:-100}"
