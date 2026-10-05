@@ -1,0 +1,2 @@
+magic-wormhole==0.24.0
+magic-wormhole-mailbox-server==0.8.0
