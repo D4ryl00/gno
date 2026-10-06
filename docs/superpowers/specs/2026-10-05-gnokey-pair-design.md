@@ -1,6 +1,7 @@
 # gnokey-pair: hand a transaction from a phone to desktop `gnokey`
 
-Design doc. Status: proposed.
+Design doc. Status: accepted. The desktop side is implemented in
+`contribs/gnokey-pair`; the gnokey-mobile side is not started.
 
 The GnoConnect sections cited below (launch links, `signtx`, sessions,
 "Obtaining the identity's signature") are in `docs/resources/gnoconnect.md` as
@@ -109,9 +110,10 @@ scan it. The generic protocol allows either side to allocate.
   `open` call and the mailbox ID are unexported. A suspended phone could
   therefore never get back into its mailbox (see Reachability).
 
-So our `wormhole` package has its own mailbox client: about 150 lines over
-`nhooyr.io/websocket`, the WebSocket library `wormhole-william` already uses. It
-reuses from upstream only what is self-contained:
+So our `wormhole` package has its own mailbox client over
+`github.com/coder/websocket`, the maintained successor of `nhooyr.io/websocket`,
+which `wormhole-william` uses. It reuses from upstream only what is
+self-contained:
 
 - `salsa.debian.org/vasudev/gospake2` for SPAKE2 (symmetric, the app ID as
   identity);
@@ -153,8 +155,9 @@ the connection without answering `closed`.
 
 ### Code and QR
 
-gnokey-pair prints the code as text and as a terminal QR (for example with
-`github.com/mdp/qrterminal`). The QR holds:
+gnokey-pair prints the code as text and as a terminal QR (`rsc.io/qr`, drawn
+with half blocks in black on white so it scans on dark terminals too). The QR
+holds:
 
 ```
 gnopair:<code>?relay=<percent-encoded mailbox URL>
@@ -382,7 +385,8 @@ user can see which binary will handle their key.
    - If parsing fails, gnokey-pair does not guess. It goes on to signing and
      treats a gnokey "key not found" failure as `signer_unavailable`.
 5. **Account.** Query `auth/accounts/<signer>` for the account number,
-   sequence and balance.
+   sequence and balance. When the transaction revokes sessions, also query
+   `auth/accounts/<signer>/sessions`, so the review can show what is revoked.
    - Where the chain allows unsigned simulation (everything v1 accepts; see
      `txNeedsSimulationSignature` in `tm2/pkg/crypto/keys/client/maketx.go`),
      simulate now. The review can then say "would fail: …" or show the gas
@@ -427,8 +431,8 @@ user can see which binary will handle their key.
 ### Review
 
 ```
-gnokey-pair — request from your phone
-Check words:  guitarist  revenge      (compare with the phone)
+gnokey-pair: request from your phone
+Check words:  guitarist  revenge      (compare with the phone; stop if they differ)
 
 Requester   "Gnokey Mobile" for "game.example"   (claimed, not verified)
 Network     gnoland-1 via https://rpc.gno.land:443
@@ -437,11 +441,13 @@ Action      sign and broadcast
 
 1. Create session  gpub1… (g1def…)
    Allowed      vm/exec:gno.land/r/demo/game
-   Budget       5 GNOT per hour — at most 3,600 GNOT over 30 days
-   Expires      2026-11-04 14:00 UTC
-2. Revoke session  g1ghi… (expired 2026-09-30)
+   Budget       5 GNOT per hour, at most 3,600 GNOT over 30 days
+   Expires      2026-11-04 14:00 UTC (in 30 days)
+2. Revoke session  gpub1… (g1ghi…)
+   Allowed      vm/exec:gno.land/r/demo/game
+   Expires      2026-09-30 12:00 UTC (expired)
 
-Fee         0.0021 GNOT (gas 2,000,000) — balance 152.3 GNOT
+Fee         0.0021 GNOT (gas 2,000,000), balance 152.3 GNOT
 Simulation  ok, 1,412,330 gas
 
 Sign? [y/N]
@@ -460,7 +466,10 @@ What the review must show:
   - `auth.MsgCreateSession`: the session review from GnoConnect's Review
     section: allow entries with the same warnings, the budget in plain terms and
     worst case, and the absolute expiry.
-  - `MsgRevokeSession` / `MsgRevokeAllSessions`: what is revoked.
+  - `MsgRevokeSession` / `MsgRevokeAllSessions`: what is revoked, read from
+    the chain: each session's allow entries and expiry. A session that is not
+    on chain is flagged. If the node does not list the sessions, the review
+    says so and does not block.
 - **Fee checks.** The fee is the requester's choice and comes out of the
   identity's balance. gnokey-pair shows it next to the balance and warns when it
   exceeds 10× `auth/gasprice` × gas wanted.
@@ -599,17 +608,17 @@ channel.
   characters in every request string.
 - **End to end.** An in-memory gno.land node from `gno.land/pkg/integration`,
   the real `gnokey` built from the required module, and a keyfile key with the
-  password fed through a pty. Cover `sendtx` creating a session, `signtx`
-  returning bytes that broadcast as-is, a stale sequence (gnokey-pair re-reads
-  it, so it succeeds), and a dry-run failure (nothing broadcast).
+  password fed through a pty. Cover `sendtx` creating a session, revoking it
+  with the review showing the session read from the chain, `signtx` returning
+  bytes that broadcast as-is, a dry-run failure (nothing broadcast), and a
+  stale sequence: the identity sends something after the phone composed the
+  request, and gnokey-pair re-reads the sequence, so it succeeds.
 - **Verify step.** A fake `gnokey` that alters the fee, adds a second
   signature, or signs with another key. Each must be caught before anything
   leaves gnokey-pair.
 
 ## Open questions
 
-1. **Name** (`gnokey-pair`) and **home**: `contribs/` in the gno repo
-   (proposed: it ships and is tested with gnokey) or its own repository.
-2. **More than one request per channel** (pairing once for a whole session's
+1. **More than one request per channel** (pairing once for a whole session's
    renewals). Deferred until there is demand: one request per code keeps
    gnokey-pair stateless.
