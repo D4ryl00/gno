@@ -1,8 +1,7 @@
 # gnokey-pair desktop: a menu bar app that starts at login
 
-Design doc. Status: proposed. Builds on
-`2026-10-05-gnokey-pair-design.md` (the CLI, its protocol and its review),
-which it does not change for the one-shot flow.
+Design doc. Status: accepted. Builds on `2026-10-05-gnokey-pair-design.md`
+(the CLI, its protocol and its review), which it does not change.
 
 ## Context
 
@@ -12,51 +11,51 @@ scans the code, reviews in the terminal, types `y`, then the gnokey password.
 Every request starts with that terminal session, and the code works once.
 
 The request: a desktop app for macOS and Linux that starts at login (a
-setting turns that off), so the user never has to run the CLI.
+setting turns that off), so the user never has to run the CLI. Every request
+still starts from a fresh code and gets its own review and approval: the
+phone never keeps a standing way to reach the computer.
 
-Starting at login is only worth it if the phone can reach the computer without
-a new code each time. With one-shot codes, a resident app saves the terminal
-but not the trip to the computer to read a code. So this design has two parts:
+Two ways to use the relay, chosen in Settings:
 
-1. **The app**: a menu bar (tray) app that does what the CLI does, with
-   windows instead of a terminal, and starts at login.
-2. **Remembered phones**: pair once with a code, then the phone sends to that
-   computer directly, and the app pops up the review. This answers the base
-   design's open question 1 ("pairing once").
+- **When I ask** (the default): the app holds no connection while idle. The
+  user clicks "Receive from phone…" and the app connects and shows a code, as
+  the CLI does.
+- **When gnokey-pair starts**: the app connects at launch and keeps a code
+  ready, so the phone can scan it whenever the user opens it, without a click
+  on the computer first.
 
 Unchanged: **`gnokey` is not modified** and stays the only program that signs;
-the relay is the default one; the CLI keeps working.
+the protocol, the relay and gnokey-mobile stay as they are; the CLI keeps
+working.
 
 ## Decision
 
 ```
  phone                               relay                    computer (app, from login)
  ─────                               ─────                    ──────────────────────────
-                                                              menu bar icon
- first time: "Send to my computer"                            "Pair a phone…": code + QR
-   scan / type code ───────────── one-shot channel ─────────▶ (as the CLI)
-   check words, "Remember this computer"                      check words, name the phone
-   K = link secret, derived on both ends from the PAKE key; never sent
-
- later: "Send to MacBook"                                     listening on nameplate(K)
-   claim nameplate(K), PAKE with code(K) ───────────────────▶ handshake
-   request ──────────────────────────────────────────────────▶ notification + review window
+                                                              menu bar icon, idle
+                                                              "Receive from phone…"
+                                                              (or at launch, automatic)
+                                    ◀── allocate ──           code + QR
+ scan / type code ── claim ──▶
+ ◀──────────────── SPAKE2, check words (as the CLI) ─────────▶
+ request ──────────────────────────────────────────────────▶  notification + review window
                                                               [Decline]  [Sign…]
                                                               password / Ledger → gnokey sign
  ◀──────────────────────────────── result ───────────────────  dry-run, broadcast
+                                                              idle again (manual)
+                                                              or a new code (automatic)
 ```
 
-- One Go program with a [Fyne](https://fyne.io) UI: a menu bar icon, and
-  windows for pairing, review, signing and settings. It runs the same pipeline
-  as the CLI, in process.
+- One Go program, `gnokey-pair`'s desktop app, with a [Fyne](https://fyne.io)
+  UI: a menu bar icon, and windows for the code, the review, signing and
+  settings. It runs the same pipeline as the CLI, in process.
 - `gnokey sign` runs in a pseudo-terminal the app owns. The app answers its
   password prompt from a password field, or tells the user to confirm on the
   Ledger.
 - Start at login: `SMAppService` on macOS, an XDG autostart entry on Linux.
   On by default; Settings → General turns it off.
-- Remembered phones: a long-term secret per phone, derived from the first
-  pairing's key. It names a nameplate the app keeps claimed while it runs, and
-  gives the password for the handshake on it.
+- The relay connection is made on demand or at launch, per a setting.
 
 ## Scope
 
@@ -66,18 +65,19 @@ In:
   Wayland (GNOME, KDE Plasma, XFCE, Cinnamon).
 - Everything the CLI does: `sendtx` and `signtx`, the review, the checks
   before and after signing (base design, Pipeline).
-- Start at login, settings, notifications, remembered phones.
-- The gnokey-mobile changes for remembered computers.
+- Start at login, the two connection modes, settings, notifications.
 
 Out:
 
 - Windows. Fyne runs there, but autostart, the pseudo-terminal and packaging
   differ; a later design.
+- Remembering a phone. Every request starts from a code (Alternatives).
 - Storing the gnokey password, or any key. The app never keeps a password
   past the `gnokey sign` it was typed for.
 - Bundling `gnokey`. The app runs the gnokey the user installed and shows
   which one (as the CLI prints it).
 - Auto-update. Releases ship as packages; updates go through them.
+- Any change to gnokey-mobile or to the protocol.
 
 ## The app
 
@@ -88,38 +88,78 @@ window) or from the launcher (opens the menu). A second launch hands over to
 the running one through a Unix socket in the user's runtime directory
 (`$TMPDIR` on macOS, `$XDG_RUNTIME_DIR` on Linux) and exits.
 
-The menu bar icon has three states: idle, a request waiting (badge), and
-offline (the relay is unreachable; the app retries with backoff and says so in
-the menu).
+The menu bar icon shows the state: idle (no connection), a code ready, a
+request waiting (badge), and offline (the relay is unreachable; the app
+retries with backoff and says so in the menu).
 
 ```
- ┌───────────────────────────────┐
- │ gnokey-pair                   │
- │ ● Listening for 2 phones      │   or "No phone remembered"
- │ ───────────────────────────── │   or "Offline: retrying the relay…"
- │ Pair a phone…                 │
- │ Recent ▸                      │   last 10 results: what, when, block
- │ ───────────────────────────── │
- │ Settings…                     │
- │ Quit gnokey-pair              │
- └───────────────────────────────┘
+ When I ask (idle)                     When gnokey-pair starts
+ ┌───────────────────────────────┐     ┌──────────────────────────────────┐
+ │ gnokey-pair                   │     │ gnokey-pair                      │
+ │ Not connected                 │     │ ● Ready: 7-guitarist-revenge     │
+ │ ───────────────────────────── │     │ ──────────────────────────────── │
+ │ Receive from phone…           │     │ Show the code…                   │
+ │ Recent ▸                      │     │ Disconnect                       │
+ │ ───────────────────────────── │     │ Recent ▸                         │
+ │ Settings…                     │     │ ──────────────────────────────── │
+ │ Quit gnokey-pair              │     │ Settings…                        │
+ └───────────────────────────────┘     │ Quit gnokey-pair                 │
+                                       └──────────────────────────────────┘
 ```
 
-Quit stops listening: remembered phones then wait and fall back (see the
-phone side). Closing a window never quits.
+"Recent" lists the last ten results: what, when, block. Closing a window
+never quits. Quit closes any channel; a phone waiting on it sees the channel
+lost and falls back to watching the chain, as with the CLI.
 
 **Linux without a tray.** GNOME shows tray icons only with the AppIndicator
 extension (Ubuntu ships it, Fedora does not). The app checks for a
-`StatusNotifierWatcher` on the session bus. Without one it still runs and
-listens; a request raises a notification that opens the review; the
-launcher entry opens a small main window with the menu's items. Settings says
-which mode is in use.
+`StatusNotifierWatcher` on the session bus. Without one it still runs; the
+launcher entry opens a small main window with the menu's items, and a request
+raises a notification that opens the review. Settings says which mode is in
+use.
+
+### Connecting to the relay
+
+Settings → General → **Connect to the relay**:
+
+- **When I ask** (default). Idle means no connection. "Receive from phone…"
+  connects, allocates a code and opens the code window. After the request
+  (or Cancel, or the timeout) the app disconnects.
+- **When gnokey-pair starts**. At launch the app connects and allocates a
+  code, without opening a window. The menu shows the code; "Show the code…"
+  opens the window with the QR. When a request is done, the app allocates the
+  next code. "Disconnect" in the menu goes idle until "Connect" or the next
+  launch; switching the setting applies at once.
+
+A code is the CLI's: one-shot, two words, one guess for anyone who does not
+have it. Keeping one ready changes two things, and the app handles both:
+
+- **A wrong guess burns the code.** The CLI exits then. In automatic mode the
+  app does **not** allocate a new code on its own: that would give an
+  attacker unlimited guesses, one per new code. It shows a notification
+  ("Someone used a wrong code; the code is no longer valid") and the menu
+  shows "Get a new code". A new code comes only from the user.
+- **Nobody may be watching the computer** when a request arrives. The review
+  window comes with a notification, shows the check words first and large,
+  and [Sign…] waits as below. A request the user did not send is declined,
+  and the user knows someone scanned the code.
+
+How long a code lasts:
+
+- In manual mode, as in the CLI: the code window counts down `-timeout`
+  (10 minutes by default, in Settings), then the app disconnects.
+- In automatic mode, as long as the app is connected. The relay keeps a
+  nameplate while its client stays subscribed, so a code can wait for hours.
+- After sleep or a network change, the `wormhole` package reconnects. The
+  relay keeps a disconnected client's claim for up to 11 minutes; after a
+  longer sleep the code is gone, and the app allocates a new one (this is not
+  a wrong guess, so it is safe to do on its own) and updates the menu.
 
 ### First launch
 
 A welcome window: what the app does, where it found `gnokey` (path and
-version), and **Start gnokey-pair when you log in**, checked. Continue
-applies it and offers "Pair a phone…".
+version), **Start gnokey-pair when you log in** (checked) and **Connect to the
+relay**: when I ask / when gnokey-pair starts. Continue applies them.
 
 If `gnokey` is not found it says so and asks for its location. A GUI app does
 not get the shell's `PATH` (launchd gives `/usr/bin:/bin:/usr/sbin:/sbin`,
@@ -127,14 +167,13 @@ autostart on Linux the session's), so the app looks in `PATH`,
 `$(go env GOPATH)/bin`, `~/go/bin`, `/opt/homebrew/bin`, `/usr/local/bin` and
 `/usr/bin`, then asks. The path is saved; Settings shows it with the version.
 
-### Pairing
+### The code window
 
-"Pair a phone…" opens a window with the QR and the code, as the CLI prints
-them, over the same one-shot channel:
+The QR and the code, as the CLI prints them:
 
 ```
  ┌──────────────────────────────────────────────┐
- │ Pair a phone                                 │
+ │ Receive from phone                           │
  │                                              │
  │   ▄▄▄▄▄▄▄ ▄ ▄▄ ▄▄▄▄▄▄▄                      │
  │   █ ▄▄▄ █ ▀█▄▀ █ ▄▄▄ █    7-guitarist-revenge│
@@ -145,29 +184,26 @@ them, over the same one-shot channel:
  └──────────────────────────────────────────────┘
 ```
 
-After the handshake the window shows the check words, large, and "Your phone
-shows the same two words. If they differ, cancel." What follows depends on
-what the phone sent:
-
-- **A request** (today's protocol): the review, below.
-- **A link** (a phone that asks to remember this computer): "Remember this
-  phone?" with a name field filled from the phone's (`Rémi's iPhone`) and
-  [Don't remember] [Remember]. A phone can link and send a request on the same
-  channel.
+In automatic mode there is no countdown, and [Cancel] is [Close] (the code
+stays ready). After the handshake the window shows the check words, large:
+"Your phone shows the same two words. If they differ, decline." Then the
+request opens the review.
 
 ### Review
 
-A request opens the review window and, if the app is in the background, a
-notification ("Rémi's iPhone: create a session for example.com"). Clicking it
-brings the window forward. The window never takes focus on its own while the
-user types elsewhere: it appears behind with the notification, unless the
-user just paired.
+The request opens the review window and, if the app is in the background, a
+notification ("Request from your phone: create a session for example.com").
+Clicking it brings the window forward. The window never takes focus on its
+own while the user types elsewhere: it appears behind, with the notification,
+unless the code window was in front.
 
 ```
  ┌──────────────────────────────────────────────────────────┐
- │ Request from Rémi's iPhone            (remembered phone) │
- │ Gnokey Mobile for example.com         claimed, not verified
+ │ Check words   guitarist revenge                          │
+ │ Your phone shows the same two words. If not, decline.    │
  │                                                          │
+ │ Requester  "Gnokey Mobile" for "example.com"             │
+ │            claimed, not verified                         │
  │ Network    dev via http://127.0.0.1:26657                │
  │ Signer     g1jg8m…sqf5  "test1"  (gnokey key, local)     │
  │ Action     sign and broadcast                            │
@@ -187,15 +223,15 @@ user just paired.
 
 The content is the CLI's review, field for field: the same checks, warnings
 (in colour, e.g. a wildcard allow path) and wording. To share it, the review
-becomes a model (below) that the CLI renders as text and the app as widgets.
+becomes a model (Architecture) that the CLI renders as text and the app as
+widgets.
 
 Against approving by accident:
 
 - [Sign…] stays disabled for one second after the window appears or changes.
 - Neither button is the default: Return does nothing, Escape declines.
-- One review at a time. A second request, from any phone, gets `busy` (an
-  error code the phone shows as "the computer is reviewing another request")
-  and is not queued.
+- One request at a time: a channel carries one request, and in automatic mode
+  the next code is allocated only after it is done.
 
 Decline answers `cancelled`, as `n` does in the CLI.
 
@@ -204,10 +240,10 @@ Decline answers `cancelled`, as `n` does in the CLI.
 [Sign…] runs `gnokey sign` in a pseudo-terminal (`creack/pty`, already a test
 dependency) instead of inheriting a terminal, and reads what gnokey prints:
 
-- A password prompt (`Enter password`): the window shows "Password for
-  `test1` in gnokey" and a password field. The app writes it to the
-  pseudo-terminal followed by a newline, then overwrites its buffer. gnokey
-  sees a terminal, so it reads the password as it does when typed;
+- The password prompt (`Enter password to decrypt key`): the window shows
+  "Password for `test1` in gnokey" and a password field. The app writes it to
+  the pseudo-terminal followed by a newline, then overwrites its buffer.
+  gnokey sees a terminal, so it reads the password as it does when typed;
   `-insecure-password-stdin` is not used.
 - A Ledger key: "Confirm on your Ledger" with a spinner, and gnokey's lines
   as it prints them.
@@ -224,14 +260,15 @@ to gnokey and never crosses gnokey-pair. Here it crosses the app's memory for
 the length of one write. The app never logs, stores or sends it, and keeps
 it only in a byte slice it zeroes. Running gnokey in a terminal window instead
 would keep the CLI's property, at the cost of a terminal popping up for every
-signature (see Alternatives).
+signature (Alternatives).
 
 ### Settings
 
 ```
  General   Start gnokey-pair when you log in      [x]
+           Connect to the relay   (•) When I ask   ( ) When gnokey-pair starts
+           Wait for the phone     10 minutes (when I ask)
            Notifications                          [x]
- Phones    Rémi's iPhone   paired 2026-10-06, last request today   [Rename] [Forget]
  Networks  dev        http://127.0.0.1:26657                       [Edit] [Remove]
            topaz-1    https://rpc.topaz.testnets.gno.land          [Edit] [Remove]
            Unknown chain: ( ) ask each time  (•) ask, then remember
@@ -247,8 +284,7 @@ shows the suggested RPC and asks to use it, and by default remembers the
 answer. The base design's rules apply: the node's chain id must match.
 
 Settings live in `~/Library/Application Support/gnokey-pair/settings.json` on
-macOS and `$XDG_CONFIG_HOME/gnokey-pair/settings.json` on Linux. Link secrets
-do not (below).
+macOS and `$XDG_CONFIG_HOME/gnokey-pair/settings.json` on Linux.
 
 ### Start at login
 
@@ -261,119 +297,17 @@ do not (below).
   `$XDG_CONFIG_HOME/autostart/land.gno.gnokey-pair.desktop`, with
   `Exec=<path> --background`. The checkbox writes or deletes it. GNOME, KDE,
   XFCE and Cinnamon all read that directory. A systemd user service is not
-  used: it can start before the graphical session, with no tray and a locked
-  keyring.
+  used: it can start before the graphical session, with no tray.
 
-"At boot" means at login: the app needs the user's session for the tray, the
-notifications and the keychain.
-
-## Remembered phones
-
-### The link
-
-On a one-shot channel, after the handshake, a phone that wants to be
-remembered sends a `link` message before (or instead of) a request:
-
-```json
-{ "type": "link", "name": "Rémi's iPhone" }
-```
-
-The app answers after the user chose:
-
-```json
-{ "type": "linked", "name": "MacBook de Rémi" }
-{ "type": "link_declined" }
-```
-
-Neither message carries a secret. Both ends derive the link secret from the
-channel's key, which SPAKE2 made and the check words confirmed:
-
-```
-K = HKDF-SHA256(channel key, salt = "", info = "gnokey-pair/v1 link")
-```
-
-Both ends store K with the peer's name. A `link` capability in `versions`
-says an end supports this; the phone offers "Remember this computer" only
-then.
-
-### Meeting again
-
-Each link has a rendezvous both ends compute from K:
-
-```
-nameplate = 30 decimal digits of HMAC-SHA256(K, "nameplate")
-code      = nameplate + "-" + base32(HMAC-SHA256(K, "password"))[:26]
-```
-
-The relay accepts a nameplate the client chooses: digits only, 40 at most
-(`check_valid_nameplate` in magic-wormhole-mailbox-server). The code is what
-SPAKE2 runs on, as with a typed code, but with 128 bits of secret instead of
-two words, so the relay cannot guess it even with unlimited tries.
-
-- **The app** claims the nameplate of every remembered phone and waits: one
-  WebSocket per phone (one nameplate per connection in the mailbox protocol).
-  The mailbox server keeps a mailbox while a client is subscribed to it, so
-  waiting does not expire. The server allows one claim per connection, so
-  after each request the app releases and claims again on a new connection.
-  It reconnects after sleep or a network change, with the `wormhole`
-  package's reconnection.
-- **Leftovers on the relay.** The relay keeps a disconnected client's claim
-  for up to 11 minutes, admits two sides per nameplate (counting released
-  ones until the nameplate is deleted, which happens once no side claims it),
-  and refuses a side that reclaims a nameplate it released. An end that died
-  between claim and release (a crash, a laptop shut, the phone app killed)
-  would block the next meeting with `crowded`. So:
-  - Each end keeps one side id per link, stored with K.
-  - An end that did not see its release acknowledged (it knows from a flag
-    it stores before claiming) first claims as the same side, then releases
-    and closes; with no other side, the relay deletes the nameplate.
-  - A claim refused (`crowded`, or a reclaim of a released side while the
-    other end has not released yet) is retried with backoff. The relay's
-    pruning bounds the wait to its 11 minutes.
-
-  A nameplate rotated per request (HMAC over a counter, or a fresh one sent
-  in each result) would not remove this, since any nameplate can be left
-  claimed, and it adds counters that drift. The tests cover a crash between
-  claim and release on each end.
-- **The phone**, on "Send to MacBook", joins with the derived code. The
-  handshake succeeds only against the app holding K. No check words are
-  shown; the review names the phone instead, and the phone shows "Sent to
-  MacBook de Rémi".
-- If the app is not running (laptop closed, app quit), the phone waits up to
-  a minute ("Waiting for MacBook… Is gnokey-pair running?") with [Stop] and
-  [Use a code instead].
-
-The relay sees the same nameplate each time a phone sends, so it can tell
-that one link is used again, and when. It cannot read the requests, and
-cannot use the link without K. Rotating the nameplate (HMAC over a counter)
-would hide that, at the cost of counters that can drift between the two ends;
-not in v1.
-
-### Storing and forgetting
-
-K lives in the OS keychain: macOS Keychain, Linux Secret Service
-(GNOME Keyring, KWallet), through `zalando/go-keyring`. If there is no Secret
-Service, the app says that phones cannot be remembered and keeps the one-shot
-flow. It does not fall back to a file.
-
-Forget, from either end, deletes K. The other end finds out at its next
-attempt: the handshake fails, and it says "this computer (phone) no longer
-knows you; pair again with a code". The app also offers [Forget this phone]
-in the review window.
-
-### What a remembered phone can do
-
-Holding K lets a phone ask; it never lets it sign. Every request goes through
-the review and gnokey's password or Ledger. A lost phone, or K taken from it,
-can at worst put review windows in front of the user, one at a time. The
-review shows which phone asks, Forget is one click away, and the user should
-forget a lost phone, as they revoke its session.
+"At boot" means at login: the app needs the user's session for the tray and
+the notifications. Starting at login and connecting at launch are separate:
+in the default mode the app starts idle and connects only when asked.
 
 ## Architecture
 
 ```
 contribs/gnokey-pair/
-  wormhole/, protocol/        unchanged; protocol gains link messages, busy
+  wormhole/, protocol/        unchanged
   pipeline/                   new: run.go, request.go, review.go, verify.go,
                               chain.go, keys.go moved out of package main
     Review                    the review as data; CLI text renderer here
@@ -382,8 +316,9 @@ contribs/gnokey-pair/
   main.go                     the CLI: a terminal UI over pipeline
   desktop/                    new module: the app
     go.mod                    requires fyne; replace ../ and ../../..
-    main.go, tray.go, windows (pair, review, sign, settings), autostart_*.go,
-    link.go (listeners per remembered phone), keyring.go, pty.go
+    main.go, tray.go, windows (code, review, sign, settings),
+    relay.go (manual and automatic modes, reconnection), autostart_*.go,
+    pty.go
 ```
 
 - **`pipeline`** holds what `run.go` does today, behind a UI interface. The
@@ -403,49 +338,31 @@ systems. Fyne gives windows and a tray (`desktop.App.SetSystemTrayMenu`: an
 with cgo for OpenGL. It does not look native; for four small windows that is
 an acceptable trade (Alternatives).
 
-## gnokey-mobile changes
-
-- The "Send to my computer" card lists remembered computers first, one
-  button each ("Send to MacBook de Rémi"), then "Scan or type the code".
-- After the check words on a coded channel, "Remember this computer" (on by
-  default when the app's `versions` has `link`), with the phone's name
-  editable.
-- Settings → Send to my computer: the remembered computers, with Rename and
-  Forget.
-- K in the iOS Keychain (`kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`)
-  and the Android Keystore-backed encrypted preferences the app already uses.
-- `core`: derive K, the nameplate and the code; `Join` with the derived code;
-  the `link`, `linked`, `busy` messages. The `wormhole` package already
-  joins any `<digits>-<text>` code; the derived one goes to it directly, not
-  through `ParsePairInput`, which only takes what a user types.
-
 ## Packaging
 
 - **macOS**: a universal `gnokey-pair.app` (bundle id `land.gno.gnokey-pair`,
-  `LSUIElement` so it has no Dock icon), signed with a Developer ID, hardened
-  runtime, notarized. Distributed as a DMG and a Homebrew cask. Notification
-  permission is asked on first use.
+  `LSUIElement` so it has no Dock icon), signed with the Developer ID
+  Application certificate of team `WMBQ84HN4T`, hardened runtime, notarized.
+  Distributed as a DMG and a Homebrew cask. Notification permission is asked
+  on first use.
 - **Linux**: a tarball and a `.deb` with the binary, the `.desktop` entry and
   icons; `make install-desktop` for a local build. Fyne needs the GL and X11
   or Wayland libraries, listed as package dependencies. Not Flatpak or Snap:
   their sandboxes would have to be opened up to run the user's `gnokey` and
   read its home, which removes their point.
-- The CLI ships as today, unchanged.
-
-## Phases
-
-1. **The app with one-shot codes.** Pipeline extraction, tray, pairing,
-   review, signing through the pseudo-terminal, settings, start at login,
-   packaging. No protocol change; gnokey-mobile unchanged.
-2. **Remembered phones.** The link messages and rendezvous in `protocol` and
-   `wormhole`, the listeners and keyring in the app, the gnokey-mobile
-   changes.
-
-Phase 1 already removes the terminal. Phase 2 is what makes starting at login
-pay off; the two can ship together if phase 1 is not released alone.
+- The app and the CLI are both called gnokey-pair: the CLI is the
+  `gnokey-pair` command, the app the `gnokey-pair.app` bundle and the
+  `gnokey-pair` launcher entry. The CLI ships as today, unchanged.
 
 ## Alternatives considered
 
+- **Remembering a phone** (pair once; a secret derived from the first
+  handshake names a rendezvous the app keeps claimed, and the phone sends
+  without a code). Fewer codes, but the phone would keep a standing way to
+  reach the computer. Rejected: every request starts from a code the user
+  pairs with.
+- **Allocating a new code by itself after a wrong guess**, in automatic mode.
+  Unlimited guesses for an attacker; the app waits for the user instead.
 - **Native UIs** (SwiftUI `MenuBarExtra` on macOS, GTK 4 on Linux, the Go
   pipeline as a library or daemon). Best look and platform behaviour, but two
   UI codebases in two languages and an IPC boundary around the review. Worth
@@ -453,26 +370,25 @@ pay off; the two can ship together if phase 1 is not released alone.
 - **Wails v3** (Go with a web view). Nicer styling than Fyne, but its tray
   support is in the v3 alpha, and a web view adds a browser engine to the
   program that shows what is signed.
-- **A daemon (systemd user service, launchd agent) with a separate UI.** The
-  listening survives without a session, but nothing can be reviewed or signed
-  without one, and the split needs authenticated IPC.
+- **A daemon (systemd user service, launchd agent) with a separate UI.**
+  Nothing can be reviewed or signed without a session anyway, and the split
+  needs authenticated IPC.
 - **Opening a terminal for `gnokey sign`** keeps the password out of the app,
   but pops a terminal for every signature, differently on every Linux
   desktop.
 - **`-insecure-password-stdin`.** Simpler than a pseudo-terminal, but the
   password then goes through a pipe, and the flag's name tells users it is the
   wrong path.
-- **Remembering by keeping one channel open** (several requests per channel).
-  The mailbox expires idle channels after a while without a subscriber, and a
-  channel does not survive either end restarting; a derived rendezvous does.
-- **Persistent pairing without a relay** (LAN discovery with mDNS). Fails on
-  guest Wi-Fi, mobile data and VPNs, where the relay works.
 
 ## Risks
 
 - **GNOME without AppIndicator.** No tray; the fallback mode keeps it usable,
   but users may think the app is not running. The welcome window says which
   mode is in use.
+- **A code kept ready can be guessed once.** Two words give an attacker one
+  chance in 65,536 per code, and the app does not renew a burned code on its
+  own. A lucky guess gets a request in front of the user, who still has the
+  check words, the review and the password.
 - **The review is now graphical.** A rendering bug could show something other
   than what is signed. The review model is shared with the CLI and tested
   there; the app's widgets render only its fields, and golden screenshots
@@ -482,8 +398,8 @@ pay off; the two can ship together if phase 1 is not released alone.
   them breaks signing. The app shows gnokey's raw output when it does not
   recognise a prompt, and tests run against the gnokey version the module
   requires.
-- **Relay load.** Each running app holds one WebSocket per remembered phone.
-  Small per user, but the default relay must be sized for it.
+- **Relay load.** In automatic mode each running app holds one WebSocket
+  while idle. Small per user, but the default relay must be sized for it.
 
 ## Testing
 
@@ -492,24 +408,16 @@ pay off; the two can ship together if phase 1 is not released alone.
 - **Pseudo-terminal bridge.** A fake `gnokey` script that prompts for a
   password, rejects a wrong one, or prints Ledger lines; the bridge must
   answer, retry and surface each case.
-- **Links.** Against the reference relay (`relaytest`): link then meet again;
-  the app restarting between; the relay restarting; sleep simulated by
-  dropping the connection; forget on either end; two phones at once
-  (`busy`); a phone with the wrong K; each end killed between claim and
-  release, then meeting again (the cleanup, and the backoff while the other
-  end's claim is pruned, with `MAILBOX_EXPIRE` shortening the 11 minutes).
+- **Relay modes**, against the reference relay (`relaytest`): manual connects
+  only on demand and disconnects after the request, the timeout or Cancel;
+  automatic connects at launch, allocates the next code after a request, does
+  not renew after a wrong guess, renews after the nameplate was pruned (a
+  long sleep, with `MAILBOX_EXPIRE` shortening the 11 minutes), and goes idle
+  on Disconnect; switching modes while a code is ready.
 - **Autostart.** The XDG entry written and removed in a temporary
   `XDG_CONFIG_HOME`; on macOS, `SMAppService` checked by hand.
 - **Windows.** Fyne's `test` package drives the review and sign windows:
   [Sign…] disabled at first, Return not approving, Escape declining.
 - **By hand**: macOS 14 and 15; Ubuntu 24.04 (GNOME with AppIndicator),
-  Fedora (GNOME without it), KDE Plasma; with a local key and a Ledger.
-
-## Open questions
-
-1. **Name.** "gnokey-pair" fits the CLI; the app might want a user-facing
-   name ("Gnokey Desktop"?), which also sets the bundle and autostart ids.
-2. **Signing identity.** Whose Developer ID signs and notarizes the macOS app.
-3. **One release or two.** Ship phase 1 alone, or wait for remembered phones.
-4. **Default for "Remember this computer"** on the phone: on (fewer codes) or
-   off (nothing stored until asked).
+  Fedora (GNOME without it), KDE Plasma; with a local key and a Ledger; in
+  both relay modes.
