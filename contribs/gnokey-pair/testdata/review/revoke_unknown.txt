@@ -1,0 +1,16 @@
+gnokey-pair: request from your phone
+Check words:  aardvark  adroitness      (compare with the phone; stop if they differ)
+
+Requester   "Gnokey Mobile" for "game.example"   (claimed, not verified)
+Network     test-chain via https://rpc.example:443
+Signer      g1d0engnjvdkd078x8h8vupmfr5k7n28ufqtllgw  "main"
+Action      sign and broadcast
+
+1. Revoke session  gpub1pgfj7ard9eg82cjtv4u4xetrwqer2dntxyfzxz3pqt80wdcmdez8z2wzx9lcudmntptx7pxr9eaftj27uww8cqxkqqnpzvdpyc9 (g10amswpv0vhefmz2yatxutskqtpzj6y6d8gj6hw)
+                (sessions unknown: the node did not list them)
+2. Revoke all sessions
+                (sessions unknown: the node did not list them)
+
+Fee         0.0021 GNOT (gas 2,000,000), balance 152.3 GNOT
+Simulation  ok, 1,412,330 gas
+

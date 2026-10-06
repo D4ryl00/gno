@@ -11,6 +11,8 @@ Action      sign and broadcast
    Budget       5 GNOT per hour, at most 3,600 GNOT over 30 days
    Expires      2026-11-04 14:00 UTC (in 30 days)
 2. Revoke session  gpub1pgfj7ard9eg82cjtv4u4xetrwqer2dntxyfzxz3pqt80wdcmdez8z2wzx9lcudmntptx7pxr9eaftj27uww8cqxkqqnpzvdpyc9 (g10amswpv0vhefmz2yatxutskqtpzj6y6d8gj6hw)
+   Allowed      vm/exec:gno.land/r/demo/game
+   Expires      2026-10-04 14:00 UTC (expired)
 
 Fee         0.0021 GNOT (gas 2,000,000), balance 152.3 GNOT
 Simulation  ok, 1,412,330 gas

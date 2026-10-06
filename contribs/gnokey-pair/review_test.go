@@ -44,6 +44,7 @@ func TestReviewGolden(t *testing.T) {
 		"create_session": func() review {
 			rv := baseReview(createSessionMsg(), auth.MsgRevokeSession{Creator: signerAddr, SessionKey: otherKey.PubKey()})
 			rv.key.Type = "ledger"
+			rv.sessions = &[]session{{Address: otherAddr, ExpiresAt: testNow.Unix() - 86400, AllowPaths: []string{"vm/exec:gno.land/r/demo/game"}}}
 			return rv
 		},
 		"session_risky": func() review {
@@ -55,7 +56,21 @@ func TestReviewGolden(t *testing.T) {
 			lifetime.ExpiresAt = testNow.Unix() + 90_000
 			none := createSessionMsg()
 			none.SpendLimit = nil
-			return baseReview(m, lifetime, none, auth.MsgRevokeAllSessions{Creator: signerAddr})
+			rv := baseReview(m, lifetime, none, auth.MsgRevokeAllSessions{Creator: signerAddr})
+			rv.sessions = &[]session{
+				{Address: otherAddr, AllowPaths: []string{"*"}},
+				{Address: sessionKey.PubKey().Address(), ExpiresAt: testNow.Unix() + 3600, AllowPaths: []string{"vm/exec:gno.land/r/a", "bank/send"}},
+			}
+			return rv
+		},
+		"revoke": func() review {
+			// Not on chain, then none to revoke.
+			rv := baseReview(auth.MsgRevokeSession{Creator: signerAddr, SessionKey: otherKey.PubKey()}, auth.MsgRevokeAllSessions{Creator: signerAddr})
+			rv.sessions = &[]session{}
+			return rv
+		},
+		"revoke_unknown": func() review {
+			return baseReview(auth.MsgRevokeSession{Creator: signerAddr, SessionKey: otherKey.PubKey()}, auth.MsgRevokeAllSessions{Creator: signerAddr})
 		},
 		"call": func() review {
 			m := callMsg()
@@ -87,7 +102,8 @@ func TestReviewGolden(t *testing.T) {
 			m.Args = []string{ctrl}
 			s := createSessionMsg()
 			s.AllowPaths = []string{"vm/exec:" + ctrl}
-			rv := baseReview(m, s)
+			rv := baseReview(m, s, auth.MsgRevokeSession{Creator: signerAddr, SessionKey: otherKey.PubKey()}, auth.MsgRevokeAllSessions{Creator: signerAddr})
+			rv.sessions = &[]session{{Address: otherAddr, AllowPaths: []string{ctrl}}}
 			rv.params = map[int][]string{0: {"p" + ctrl}}
 			rv.req.Requester = &protocol.Requester{Name: ctrl, For: ctrl}
 			rv.req.ChainID = ctrl

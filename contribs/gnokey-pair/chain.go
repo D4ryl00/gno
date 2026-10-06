@@ -24,11 +24,20 @@ type node interface {
 	// Account returns nil when the chain has no account at addr.
 	Account(ctx context.Context, addr crypto.Address) (*std.BaseAccount, error)
 	GasPrice(ctx context.Context) (std.GasPrice, error)
+	// Sessions returns the sessions of addr.
+	Sessions(ctx context.Context, addr crypto.Address) ([]session, error)
 	// FuncParams returns the parameter names of a realm's functions, without
 	// the realm parameter of crossing functions.
 	FuncParams(ctx context.Context, pkgPath string) (map[string][]string, error)
 	Simulate(ctx context.Context, tx std.Tx) (abci.ResponseDeliverTx, error)
 	Broadcast(ctx context.Context, tx std.Tx) (*ctypes.ResultBroadcastTxCommit, error)
+}
+
+// session is what the review shows of a session on chain.
+type session struct {
+	Address    crypto.Address
+	ExpiresAt  int64 // 0: never
+	AllowPaths []string
 }
 
 type rpcNode struct{ c *rpcclient.RPCClient }
@@ -79,6 +88,30 @@ func (n rpcNode) Account(ctx context.Context, addr crypto.Address) (*std.BaseAcc
 		return nil, fmt.Errorf("account: %w", err)
 	}
 	return &base, nil
+}
+
+func (n rpcNode) Sessions(ctx context.Context, addr crypto.Address) ([]session, error) {
+	res, err := n.query(ctx, "auth/accounts/"+addr.String()+"/sessions", nil)
+	if err != nil {
+		return nil, err
+	}
+	// As in Account: encoding/json for the chain's wrapper, amino inside.
+	var accs []struct {
+		BaseSessionAccount json.RawMessage
+		AllowPaths         []string `json:"allow_paths"`
+	}
+	if err := json.Unmarshal(res.Data, &accs); err != nil {
+		return nil, fmt.Errorf("sessions: %w", err)
+	}
+	sessions := make([]session, len(accs))
+	for i, acc := range accs {
+		var base std.BaseSessionAccount
+		if err := amino.UnmarshalJSON(acc.BaseSessionAccount, &base); err != nil {
+			return nil, fmt.Errorf("sessions: %w", err)
+		}
+		sessions[i] = session{Address: base.Address, ExpiresAt: base.ExpiresAt, AllowPaths: acc.AllowPaths}
+	}
+	return sessions, nil
 }
 
 func (n rpcNode) GasPrice(ctx context.Context) (std.GasPrice, error) {
