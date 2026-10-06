@@ -24,9 +24,6 @@ import (
 	"github.com/gnolang/gno/tm2/pkg/std"
 )
 
-// DefaultRelay is the gno.land mailbox server.
-const DefaultRelay = "wss://gnokey-pair.berty.io/v1"
-
 var versions = protocol.Versions{
 	V:     1,
 	Kinds: []string{protocol.KindTx},
@@ -81,7 +78,7 @@ func (p *pairing) run(ctx context.Context) error {
 		defer cancel()
 		ch.Close(cctx)
 	}()
-	qr, err := renderQR(pairingURI(ch.Code(), p.cfg.relay))
+	qr, err := renderQR(protocol.PairingURI(ch.Code(), p.cfg.relay))
 	if err != nil {
 		return err
 	}

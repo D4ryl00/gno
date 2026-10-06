@@ -1,7 +1,9 @@
 // Package relaytest runs the Python reference mailbox server for tests, from
-// the venv that `make test-deps` builds. Without the venv, tests that need it
-// skip, unless WORMHOLE_REQUIRE_RELAY is set
-// (.github/workflows/ci-gnokey-pair-relay.yml).
+// the venv that `make test-deps` builds in contribs/gnokey-pair, or the
+// interpreter WORMHOLE_PYTHON names. Without either, tests that need it skip,
+// unless WORMHOLE_REQUIRE_RELAY is set
+// (.github/workflows/ci-gnokey-pair-relay.yml). Exported so that requesters
+// such as gnokey-mobile test against the same server.
 package relaytest
 
 import (
@@ -39,7 +41,7 @@ func findPython() string {
 	if p := os.Getenv("WORMHOLE_PYTHON"); p != "" {
 		return p
 	}
-	p := filepath.Join(dir, "..", "..", ".venv", "bin", "python")
+	p := filepath.Join(dir, "..", ".venv", "bin", "python")
 	if _, err := os.Stat(p); err != nil {
 		return ""
 	}

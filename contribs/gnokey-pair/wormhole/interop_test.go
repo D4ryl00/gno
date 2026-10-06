@@ -19,7 +19,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gnolang/gno/contribs/gnokey-pair/internal/relaytest"
+	"github.com/gnolang/gno/contribs/gnokey-pair/relaytest"
 )
 
 // pythonPeer runs testdata/peer.py and returns its output lines by prefix.

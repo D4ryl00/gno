@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gnolang/gno/contribs/gnokey-pair/internal/relaytest"
+	"github.com/gnolang/gno/contribs/gnokey-pair/relaytest"
 )
 
 // drop kills ch's socket without telling the server, like a phone going to

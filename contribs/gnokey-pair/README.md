@@ -32,12 +32,15 @@ Packages:
 
 - `wormhole`: the magic-wormhole channel, with reconnection; gnokey-mobile
   imports it too.
-- `protocol`: the request and result messages.
+- `protocol`: the request and result messages, the QR's `gnopair:` URI and
+  the default relay.
+- `relaytest`: runs the reference mailbox server for tests, here and in
+  requesters such as gnokey-mobile.
 
 ## Tests
 
 The tests that need a relay run the Python reference mailbox server, pinned in
-`internal/relaytest/requirements.txt`: the `wormhole` tests and the end-to-end
+`relaytest/requirements.txt`: the `wormhole` tests and the end-to-end
 test (an in-memory node, the real `gnokey`, a password typed through a pty).
 
 ```sh

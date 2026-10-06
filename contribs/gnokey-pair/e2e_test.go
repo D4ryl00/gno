@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/creack/pty"
-	"github.com/gnolang/gno/contribs/gnokey-pair/internal/relaytest"
 	"github.com/gnolang/gno/contribs/gnokey-pair/protocol"
+	"github.com/gnolang/gno/contribs/gnokey-pair/relaytest"
 	"github.com/gnolang/gno/contribs/gnokey-pair/wormhole"
 	"github.com/gnolang/gno/gno.land/pkg/integration"
 	"github.com/gnolang/gno/gnovm/pkg/gnoenv"
