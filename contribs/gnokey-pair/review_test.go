@@ -158,6 +158,8 @@ func TestFormat(t *testing.T) {
 		{formatDuration(3601), "about 1 hour"},
 		{formatDuration(90_000), "25 hours"},
 		{formatDuration(90_001), "about 1 day"},
+		{formatDuration(30*86400 - 60), "about 30 days"},
+		{formatDuration(120), "2 minutes"},
 		{formatDuration(30 * 86400), "30 days"},
 		{formatPeriod(3600), "hour"},
 		{formatPeriod(7200), "2 hours"},

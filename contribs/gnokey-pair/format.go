@@ -90,17 +90,21 @@ var units = []struct {
 	name string
 }{{86400, "day"}, {3600, "hour"}, {60, "minute"}}
 
-// formatDuration names a duration in seconds with its largest exact unit,
-// or approximately in the largest unit that fits.
+// formatDuration names a duration in seconds with an exact count of days or
+// hours, or else rounded in the largest unit that fits: 30 days less a
+// minute is "about 30 days", not 43,199 minutes.
 func formatDuration(secs int64) string {
-	for _, u := range units {
+	for _, u := range units[:2] {
 		if secs >= u.secs && secs%u.secs == 0 {
 			return plural(secs/u.secs, u.name)
 		}
 	}
 	for _, u := range units {
 		if secs >= u.secs {
-			return "about " + plural(secs/u.secs, u.name)
+			if secs%u.secs == 0 {
+				return plural(secs/u.secs, u.name)
+			}
+			return "about " + plural((secs+u.secs/2)/u.secs, u.name)
 		}
 	}
 	return plural(secs, "second")
