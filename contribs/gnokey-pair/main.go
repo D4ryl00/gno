@@ -16,6 +16,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gnolang/gno/contribs/gnokey-pair/protocol"
 	"github.com/gnolang/gno/tm2/pkg/commands"
 )
 
@@ -49,7 +50,7 @@ func main() {
 
 func (c *config) RegisterFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.remote, "remote", "", "node for the request's chain (default: ask before using the one the phone suggests)")
-	fs.StringVar(&c.relay, "relay", DefaultRelay, "mailbox server")
+	fs.StringVar(&c.relay, "relay", protocol.DefaultRelay, "mailbox server")
 	fs.StringVar(&c.gnokey, "gnokey", "gnokey", "gnokey binary, looked up in $PATH")
 	fs.StringVar(&c.home, "home", "", "passed to gnokey as -home")
 	fs.DurationVar(&c.timeout, "timeout", 10*time.Minute, "how long to wait for the phone")

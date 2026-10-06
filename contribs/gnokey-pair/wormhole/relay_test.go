@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gnolang/gno/contribs/gnokey-pair/internal/relaytest"
+	"github.com/gnolang/gno/contribs/gnokey-pair/relaytest"
 )
 
 func TestMain(m *testing.M) { relaytest.Main(m) }

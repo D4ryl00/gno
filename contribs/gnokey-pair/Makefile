@@ -26,7 +26,7 @@ test-deps: $(venv)
 test-relay: $(venv)
 	WORMHOLE_REQUIRE_RELAY=1 go test $(GOTEST_FLAGS) -race ./...
 
-$(venv): internal/relaytest/requirements.txt
+$(venv): relaytest/requirements.txt
 	python3 -m venv $(venv)
-	$(venv)/bin/pip install --quiet --requirement internal/relaytest/requirements.txt
+	$(venv)/bin/pip install --quiet --requirement relaytest/requirements.txt
 	touch $(venv)

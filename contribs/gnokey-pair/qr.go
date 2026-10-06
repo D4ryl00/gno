@@ -1,17 +1,10 @@
 package main
 
 import (
-	"net/url"
 	"strings"
 
 	"rsc.io/qr"
 )
-
-// pairingURI is what the QR holds. The relay is in it because both sides
-// must use the same server.
-func pairingURI(code, relay string) string {
-	return "gnopair:" + code + "?relay=" + url.QueryEscape(relay)
-}
 
 // renderQR draws text as a QR code with half blocks, two modules per
 // character row. Colors are explicit (black on white), so it scans on dark
