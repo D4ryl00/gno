@@ -255,9 +255,10 @@ gnokey-pair also sends `"modes": ["sendtx", "signtx"]`. A requester that wants a
 kind or mode the peer did not list does not send it. It tells the user the
 desktop needs a newer gnokey-pair. Unknown fields are ignored on both sides.
 
-A requester that can broadcast a signed transaction itself sends
-`"features": ["broadcast"]`. gnokey-pair signs a `sendtx` request without a
-node only for such a requester (Signing offline).
+gnokey-pair also sends `"features": ["offline"]` when it accepts a `signtx`
+request marked `offline` (Signing offline). A phone sends that marker only to
+a gnokey-pair that lists it: an older one would ignore the field and query its
+node anyway.
 
 ### Check words
 
@@ -298,12 +299,11 @@ sends `result` (phase `"0"`).
 | `signer` | yes | the identity that must sign: the only signer the messages may name |
 | `tx` | yes | at most 64 KiB, with no signatures |
 | `requester` | no | display only, always shown labeled as *claimed*. `for` is the GnoConnect producer the phone is brokering for (its callback host), when there is one |
-| `account` | no | `{"number": "12", "sequence": "5"}`, decimal strings as in amino JSON: the phone's view of the signer's account. Used only when gnokey-pair signs without a node (Signing offline) |
+| `offline` | no | `true`: sign only, with no network operation on the computer (Signing offline). Valid only with `signtx` |
+| `account` | with `offline` | `{"number": "12", "sequence": "5"}`, decimal strings as in amino JSON: the signer's account number and sequence, which gnokey-pair cannot read without a node. Ignored otherwise |
 
-With a node, gnokey-pair reads the account number and sequence from the chain
-just before signing and ignores `account`, which removes the staleness
-problem. A phone sends `account` whenever it knows them; a gnokey-pair that
-predates the field ignores it.
+Without `offline`, gnokey-pair reads the account number and sequence from the
+chain just before signing, which removes the staleness problem.
 Absolute times inside the transaction, such as `MsgCreateSession.ExpiresAt`,
 were set by the phone. gnokey-pair shows them and never changes them.
 
@@ -330,9 +330,8 @@ were set by the phone. gnokey-pair shows them and never changes them.
 same rule applies: the receiver broadcasts it unmodified. `hash` has the
 `sendtx` callback's encoding.
 
-`signedtx` always means "signed, not broadcast". It answers `signtx`, and also
-`sendtx` when gnokey-pair signed without a node: the phone then broadcasts it,
-as it would for `signtx`.
+`signedtx` always means "signed, not broadcast": it answers `signtx`,
+`offline` or not, and the phone broadcasts it.
 
 `manual: true` answers `sendtx` when the user chose to run the gnokey command
 themselves (Signing by hand): gnokey-pair has not signed anything, and the
@@ -373,8 +372,6 @@ gnokey-pair [flags]
   -home <dir>          passed to gnokey as -home
   -timeout <duration>  wait for a peer (default 10m)
   -linger <duration>   after answering, wait for the phone's `received` (default 10m)
-  -offline             no node: sign with the phone's account number and
-                       sequence; the phone broadcasts (see Signing offline)
   -manual              print the gnokey command instead of running gnokey
                        (see Signing by hand)
 ```
@@ -454,41 +451,46 @@ user can see which binary will handle their key.
 ### Signing offline (local network)
 
 For a computer on the same local network as the phone but without internet
-access. The phone has internet and broadcasts.
+access. The phone asks for a signature only, and broadcasts it itself.
 
+- **The phone decides.** It sends `mode: "signtx"` with `offline: true` and
+  `account`. gnokey-pair then makes no network operation at all, even with
+  `-remote` or a node for the chain: the phone asked for none, and keeping to
+  that makes the behaviour predictable. Nothing on the computer turns this on,
+  and gnokey-pair never falls back to it on its own: a node that cannot be
+  reached stays `network_declined` for a request without `offline`.
 - **The relay is on the local network**: the reference mailbox server, run on
   the computer or another machine there (README, "Running your own relay"),
   and `gnokey-pair -relay ws://<lan address>:4000/v1`. The QR carries the relay
   (`gnopair:<code>?relay=…`), so a scanned code needs no setting on the phone;
   a typed code needs the phone's relay setting.
-- **`-offline` turns the network step off.** Without it, a node that cannot be
-  reached is `network_declined`, as today, and the message suggests
-  `-offline`. gnokey-pair never falls back to offline on its own: a node made
-  unreachable must not turn into a review with fewer checks.
 - **What changes in the pipeline:**
+  - Validate (step 2): `offline` with a mode other than `signtx`, or without
+    `account`, is `invalid_request`.
   - Network (step 3): skipped. `chainid` comes from the request, unchecked;
     it is what the signature binds, and the review shows it.
-  - Account (step 5): the number and sequence come from `account`. Without
-    it, `invalid_request` ("signing offline needs the account number and
-    sequence; update Gnokey Mobile"). No balance, no gas price, no
-    simulation, no session list, no `qdoc` parameter names.
-  - `sendtx` from a requester without the `broadcast` feature:
-    `network_declined` before the review, since nobody would broadcast.
-  - Finish (step 9): answer with `signedtx`, for `sendtx` and `signtx` alike.
-- **The review says what was not checked**, in a line under Network:
+  - Account (step 5): the number and sequence come from `account`. No
+    balance, no gas price, no simulation, no session list, no `qdoc`
+    parameter names.
+  - Finish (step 9): `signedtx`, as for any `signtx`.
+- **The review says the phone asked for it, and what was not checked**:
 
   ```
-  Network     gnoland-1   offline: not checked against the chain
+  Offline     your phone asked to sign without checking against the chain
+  Network     gnoland-1   (not checked)
   Account     number 12, sequence 5, from the phone
   Fee         0.0021 GNOT (gas 2,000,000); balance unknown
-  Simulation  not run (offline)
+  Simulation  not run
   ```
 
   A revocation shows the revoked key with "its allow entries and expiry
   cannot be shown offline"; a call shows positional arguments.
-- **What the phone's values can do**: a wrong account number or sequence
-  only makes a signature the chain rejects when the phone broadcasts. They
-  cannot change what is signed, which the user reviewed.
+- **Why the phone may ask for fewer checks.** It is the user's own wallet,
+  authenticated by the code and the check words; a GnoConnect producer cannot
+  set the marker, which the wallet adds itself. The review says what was not
+  checked, and the user can decline. A wrong account number or sequence only
+  makes a signature the chain rejects when the phone broadcasts; neither can
+  change what is signed, which the user reviewed.
 
 ### Signing by hand
 
@@ -512,7 +514,7 @@ the gnokey command? [y/N]` instead of `Sign? [y/N]`.
   phone watches the chain. The check after signing (step 8) is not run: the
   user runs their own gnokey on the file gnokey-pair wrote, and broadcasts
   it themselves.
-- **`signtx`, or signing offline**: `gnokey sign` alone. gnokey-pair waits for
+- **`signtx`, `offline` or not**: `gnokey sign` alone. gnokey-pair waits for
   the file to come back signed (it checks it every half second, up to
   `-timeout`), verifies it as in step 8, and answers with `signedtx`.
 
@@ -584,13 +586,16 @@ What the review must show:
   your computer". On `result` it sends `received` and shows the outcome. As
   today, it moves on only once the chain shows it.
 - **Versions.** If gnokey-pair does not list `tx` / `sendtx`, the app falls back
-  to the command. The app sends `"features": ["broadcast"]`.
-- **Offline signing.** The app sends `account` (number and sequence) whenever
-  it read them; for its own session create and revoke it reads them before
-  sending. On `success` with `signedtx`, it broadcasts the signed bytes
-  unmodified through its node, shows "Signed by your computer, broadcast by
-  this phone", and watches the chain as usual. A broadcast that fails shows the
-  node's error.
+  to the command.
+- **Offline signing.** A switch on the "Send to my computer" card, remembered:
+  "My computer has no internet: it only signs, this phone broadcasts". On, the
+  app sends `signtx` with `offline: true` and `account` (it reads the account
+  number and sequence before sending, for its own session create and revoke
+  too), provided gnokey-pair lists the `offline` feature; otherwise it says the
+  computer needs a newer gnokey-pair. On `success` with `signedtx`, it
+  broadcasts the signed bytes unmodified through its node, shows "Signed by
+  your computer, broadcast by this phone", and watches the chain as usual. A
+  broadcast that fails shows the node's error.
 - **Signing by hand.** On `success` with `manual: true`, the app shows "Your
   computer gives you the gnokey command; run it there" and watches the chain.
 - **Local relay.** A scanned QR names the relay; a `ws://` address on the local
@@ -688,11 +693,11 @@ channel.
   computer, a session's `ExpiresAt` is shorter than granted. The review shows
   the absolute date. A request whose expiry is already past is `invalid_request`
   before review.
-- **Signing offline checks less.** No balance, simulation or session details;
-  the chain id and the account come from the phone. Mitigation: only with
-  `-offline` (or the app's per-chain setting), never as a fallback, and the
-  review lists what was not checked. What is signed is still exactly what was
-  reviewed.
+- **Signing offline checks less, at the phone's request.** No balance,
+  simulation or session details; the chain id and the account come from the
+  phone. Mitigation: only when the request says `offline`, never as a
+  fallback; the review says the phone asked for it and lists what was not
+  checked. What is signed is still exactly what was reviewed.
 - **Signing by hand skips the check after signing** with the full command,
   since the user's gnokey writes and broadcasts. That is the user's choice; the
   check still runs when gnokey-pair takes the signed file back.
@@ -731,11 +736,12 @@ channel.
 - **Verify step.** A fake `gnokey` that alters the fee, adds a second
   signature, or signs with another key. Each must be caught before anything
   leaves gnokey-pair.
-- **Offline.** No node configured: `sendtx` with `account` and the
-  `broadcast` feature returns `signedtx` that broadcasts as-is; without
-  `account`, `invalid_request`; without the feature, `network_declined`; an
-  unreachable node without `-offline` stays `network_declined`; the review's
-  offline lines (golden file).
+- **Offline.** `signtx` with `offline` and `account` returns `signedtx` that
+  broadcasts as-is, with no request to the node even when one is configured
+  (a node that records calls); `offline` with `sendtx`, or without `account`,
+  is `invalid_request`; without `offline`, an unreachable node stays
+  `network_declined`; the `offline` feature in gnokey-pair's versions; the
+  review's offline lines (golden file).
 - **By hand.** The printed command, shell-quoted, signs and broadcasts against
   the in-memory node; `manual: true` is answered; for `signtx`, gnokey-pair
   picks up the file the user signed, verifies it (an altered one is refused),

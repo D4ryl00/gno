@@ -275,7 +275,7 @@ Settings → Signing → **When I approve**: (•) gnokey-pair signs with gnokey
 ( ) I run the gnokey command myself. Off by default. The command is the base
 design's (Signing by hand): sign, dry-run and broadcast for `sendtx` with a
 node; `gnokey sign` alone when the signed transaction goes back to the phone
-(`signtx`, or signing offline).
+(`signtx`, `offline` or not).
 
 [Copy gnokey command] approves the request, puts the command on the
 clipboard, and shows it in the window, selectable:
@@ -301,7 +301,6 @@ The command carries no secret, so the clipboard holds nothing sensitive.
                             ( ) I run the gnokey command myself
  Networks  dev        http://127.0.0.1:26657                       [Edit] [Remove]
            topaz-1    https://rpc.topaz.testnets.gno.land          [Edit] [Remove]
-           gnoland-1  offline: no node, the phone broadcasts       [Edit] [Remove]
            Unknown chain: ( ) ask each time  (•) ask, then remember
  gnokey    /Users/remi/go/bin/gnokey  (1.2.0)                      [Change…]
            Home: gnokey's default                                  [Change…]
@@ -314,13 +313,15 @@ ignores the suggestion, as `-remote` does. For an unknown chain the review
 shows the suggested RPC and asks to use it, and by default remembers the
 answer. The base design's rules apply: the node's chain id must match.
 
-A chain can be set to **offline** instead of a node: the CLI's `-offline` for
-that chain. The review then lists what was not checked (base design, Signing
-offline), and the signed transaction goes back to the phone, which
-broadcasts. A node that does not answer is never turned into offline on its
-own; the review says the node failed and offers to edit the network. For a
-computer without internet, the relay is set to one on the local network
-(Settings → Relay; README, "Running your own relay").
+**Signing offline** is the phone's choice, not a setting here: a request
+marked `offline` (base design, Signing offline) is signed with no network
+operation, whatever node the chain has, and its review opens with "Your phone
+asked to sign without checking against the chain" and lists what was not
+checked. A node that does not answer is never turned into offline on its own:
+for a request without the marker, the review says the node failed and offers
+to edit the network. For a computer without internet, the relay is set to
+one on the local network (Settings → Relay; README, "Running your own
+relay").
 
 Settings live in `~/Library/Application Support/gnokey-pair/settings.json` on
 macOS and `$XDG_CONFIG_HOME/gnokey-pair/settings.json` on Linux.
@@ -459,9 +460,9 @@ an acceptable trade (Alternatives).
   the approve button disabled at first, Return not approving, Escape
   declining; the button and link following the Signing setting; the command
   copied and shown, [Done] removing the file, the wait for a signed file.
-- **Offline chain.** A chain set to offline signs with the phone's account
-  and returns `signedtx`; an unreachable node on a chain with a node stays an
-  error.
+- **Offline requests.** A request marked `offline` is signed with the phone's
+  account and returns `signedtx`, with no call to the chain's node; a request
+  without it and an unreachable node stays an error.
 - **By hand**: macOS 14 and 15; Ubuntu 24.04 (GNOME with AppIndicator),
   Fedora (GNOME without it), KDE Plasma; with a local key and a Ledger; in
   both relay modes.
