@@ -1,0 +1,21 @@
+gnokey-pair: request from your phone
+Check words:  aardvark  adroitness      (compare with the phone; stop if they differ)
+
+Requester   not stated
+Network     test-chain via https://rpc.example:443
+Signer      g1d0engnjvdkd078x8h8vupmfr5k7n28ufqtllgw  "main"
+Action      sign only; the phone broadcasts
+
+1. Call  gno.land/r/demo/game.Play
+                move = "rock"
+                rounds = "3"
+   Send         1 GNOT
+   Max deposit  0.0015 GNOT
+2. Call  gno.land/r/demo/game.Play
+                #1 = "rock"
+                #2 = "3"
+                (parameter names unavailable)
+
+Fee         0.0021 GNOT (gas 2,000,000), balance 152.3 GNOT
+Simulation  ok, 1,412,330 gas
+

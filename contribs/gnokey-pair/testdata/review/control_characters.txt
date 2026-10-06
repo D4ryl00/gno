@@ -1,0 +1,19 @@
+gnokey-pair: request from your phone
+Check words:  aardvark  adroitness      (compare with the phone; stop if they differ)
+
+Requester   "\x1b[2J\x1b[Hevil\u202etxt\r\n" for "\x1b[2J\x1b[Hevil\u202etxt\r\n"   (claimed, not verified)
+Network     \x1b[2J\x1b[Hevil\u202etxt\r\n via \x1b[2J\x1b[Hevil\u202etxt\r\n
+Signer      g1d0engnjvdkd078x8h8vupmfr5k7n28ufqtllgw  "\x1b[2J\x1b[Hevil\u202etxt\r\n"
+Action      sign and broadcast
+
+1. Call  gno.land/r/\x1b[2J\x1b[Hevil\u202etxt\r\n.F\x1b[2J\x1b[Hevil\u202etxt\r\n
+                p\x1b[2J\x1b[Hevil\u202etxt\r\n = "\x1b[2J\x1b[Hevil\u202etxt\r\n"
+2. Create session  gpub1pgfj7ard9eg82cjtv4u4xetrwqer2dntxyfzxz3pqtdqp6zyrdwpxvc9srvcstukkq45e6395nv65xjk7djvp2cnnnp2yr7a2u9 (g122jlf685ds9yml0wc59c5ufc660pfeccq89tlk)
+   Allowed      vm/exec:\x1b[2J\x1b[Hevil\u202etxt\r\n
+   Budget       5 GNOT per hour, at most 3,600 GNOT over 30 days
+   Expires      2026-11-04 14:00 UTC (in 30 days)
+
+Memo        "\x1b[2J\x1b[Hevil\u202etxt\r\n"
+Fee         0.0021 GNOT (gas 2,000,000), balance 152.3 GNOT
+Simulation  not run: \x1b[2J\x1b[Hevil\u202etxt\r\n
+

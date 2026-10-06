@@ -1,0 +1,18 @@
+gnokey-pair: request from your phone
+Check words:  aardvark  adroitness      (compare with the phone; stop if they differ)
+
+Requester   "Gnokey Mobile" for "game.example"   (claimed, not verified)
+Network     test-chain via https://rpc.example:443
+Signer      g1d0engnjvdkd078x8h8vupmfr5k7n28ufqtllgw
+Action      sign and broadcast
+
+1. Send  12.345678 GNOT, 7foo to g10amswpv0vhefmz2yatxutskqtpzj6y6d8gj6hw
+2. Send to several recipients
+   From         g1d0engnjvdkd078x8h8vupmfr5k7n28ufqtllgw  0.000003 GNOT
+   To           g10amswpv0vhefmz2yatxutskqtpzj6y6d8gj6hw  0.000003 GNOT
+
+Fee         200 GNOT (gas 2,000,000), balance 152.3 GNOT
+            warning: the balance cannot pay this fee
+            warning: more than 10 times the chain's minimum, 0.002 GNOT
+Simulation  would fail: insufficient funds
+
