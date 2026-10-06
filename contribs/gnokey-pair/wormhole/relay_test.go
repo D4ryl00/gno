@@ -3,109 +3,13 @@ package wormhole
 import (
 	"context"
 	"errors"
-	"fmt"
-	"io"
-	"net"
-	"os"
-	"os/exec"
-	"path/filepath"
-	"sync"
 	"testing"
 	"time"
+
+	"github.com/gnolang/gno/contribs/gnokey-pair/internal/relaytest"
 )
 
-// The tests run against the reference mailbox server and client, from the
-// Python venv that `make test-deps` builds. Without it they skip, unless
-// WORMHOLE_REQUIRE_RELAY is set (.github/workflows/ci-gnokey-pair-relay.yml).
-
-var (
-	python    = findPython()
-	relay     sync.Once
-	relayURL  string // shared mailbox server, started by the first needRelay
-	stopRelay = func() {}
-	errRelay  error
-)
-
-func TestMain(m *testing.M) {
-	code := m.Run()
-	stopRelay()
-	os.Exit(code)
-}
-
-func findPython() string {
-	if p := os.Getenv("WORMHOLE_PYTHON"); p != "" {
-		return p
-	}
-	p, err := filepath.Abs("../.venv/bin/python")
-	if err != nil {
-		return ""
-	}
-	if _, err := os.Stat(p); err != nil {
-		return ""
-	}
-	return p
-}
-
-// startRelay runs a reference mailbox server on a free port. env is added to
-// its environment (see testdata/mailbox.py).
-func startRelay(env []string) (url string, stop func(), err error) {
-	dir, err := os.MkdirTemp("", "wormhole-relay")
-	if err != nil {
-		return "", nil, err
-	}
-	l, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return "", nil, err
-	}
-	addr := l.Addr().String()
-	l.Close()
-
-	cmd := exec.Command(python, "testdata/mailbox.py",
-		"--port", fmt.Sprintf("tcp:%d:interface=127.0.0.1", l.Addr().(*net.TCPAddr).Port),
-		"--channel-db", filepath.Join(dir, "channel.sqlite"))
-	cmd.Env = append(os.Environ(), env...)
-	var out io.Writer = io.Discard
-	if p := os.Getenv("WORMHOLE_RELAY_LOG"); p != "" {
-		f, err := os.OpenFile(p, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-		if err != nil {
-			return "", nil, err
-		}
-		out = f
-	}
-	cmd.Stdout, cmd.Stderr = out, out
-	if err := cmd.Start(); err != nil {
-		return "", nil, err
-	}
-	stop = func() {
-		cmd.Process.Kill()
-		cmd.Wait()
-		os.RemoveAll(dir)
-	}
-	for deadline := time.Now().Add(20 * time.Second); ; time.Sleep(50 * time.Millisecond) {
-		if c, err := net.Dial("tcp", addr); err == nil {
-			c.Close()
-			return "ws://" + addr + "/v1", stop, nil
-		}
-		if time.Now().After(deadline) {
-			stop()
-			return "", nil, errors.New("mailbox server did not start")
-		}
-	}
-}
-
-func needRelay(t *testing.T) {
-	t.Helper()
-	switch {
-	case python == "" && os.Getenv("WORMHOLE_REQUIRE_RELAY") != "":
-		t.Fatal("no Python venv for the reference mailbox server: run `make test-deps` in contribs/gnokey-pair")
-	case python == "":
-		t.Skip("no Python venv for the reference mailbox server: run `make test-deps` in contribs/gnokey-pair")
-	}
-	relay.Do(func() { relayURL, stopRelay, errRelay = startRelay(nil) })
-	if errRelay != nil {
-		t.Fatal(errRelay)
-	}
-}
+func TestMain(m *testing.M) { relaytest.Main(m) }
 
 var testVersions = map[string]any{"gnokey-pair": map[string]any{"v": 1, "kinds": []string{"tx"}}}
 

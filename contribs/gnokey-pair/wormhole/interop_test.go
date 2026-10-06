@@ -18,6 +18,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/gnolang/gno/contribs/gnokey-pair/internal/relaytest"
 )
 
 // pythonPeer runs testdata/peer.py and returns its output lines by prefix.
@@ -26,9 +28,9 @@ type pythonPeer struct {
 	cmd   *exec.Cmd
 }
 
-func startPython(t *testing.T, ctx context.Context, arg string) *pythonPeer {
+func startPython(t *testing.T, ctx context.Context, relayURL, arg string) *pythonPeer {
 	t.Helper()
-	cmd := exec.CommandContext(ctx, python, "testdata/peer.py", relayURL, arg)
+	cmd := exec.CommandContext(ctx, relaytest.Python(), "testdata/peer.py", relayURL, arg)
 	out, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -94,18 +96,18 @@ func interop(t *testing.T, ctx context.Context, ch *Channel, py *pythonPeer) {
 }
 
 func TestInteropPythonJoins(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	ctx := testContext(t, 30*time.Second)
 	ch := allocate(t, ctx, testConfig(relayURL))
-	interop(t, ctx, ch, startPython(t, ctx, ch.Code()))
+	interop(t, ctx, ch, startPython(t, ctx, relayURL, ch.Code()))
 }
 
 func TestInteropPythonAllocates(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	ctx := testContext(t, 30*time.Second)
-	py := startPython(t, ctx, "allocate")
+	py := startPython(t, ctx, relayURL, "allocate")
 	interop(t, ctx, join(t, ctx, testConfig(relayURL), py.next(t, "code")), py)
 }
 
@@ -113,7 +115,7 @@ func TestInteropPythonAllocates(t *testing.T) {
 // relay. The proxy is set explicitly: Go never proxies loopback addresses,
 // so HTTPS_PROXY cannot be exercised against a local relay.
 func TestThroughConnectProxy(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	ctx := testContext(t, 20*time.Second)
 

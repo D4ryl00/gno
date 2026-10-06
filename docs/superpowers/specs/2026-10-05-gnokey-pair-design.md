@@ -172,8 +172,8 @@ single-use and expires after 10 minutes without a peer (`-timeout`).
 
 ### Relay
 
-The mailbox server is a gno-operated server reachable over `wss://`. The host
-name is to be decided. The public `ws://relay.magic-wormhole.io:4000/v1` works
+The mailbox server is `wss://gnokey-pair.berty.io/v1`, the default of both
+ends. The public `ws://relay.magic-wormhole.io:4000/v1` works
 for the two native ends, since the content is encrypted end to end. It still
 exposes metadata in clear, it is a dependency the project does not control, and
 a browser on an `https:` page cannot reach a `ws:` server (Phase 2). Both ends
@@ -252,8 +252,9 @@ desktop needs a newer gnokey-pair. Unknown fields are ignored on both sides.
 
 ### Check words
 
-After the PAKE, both sides show the same two words derived from the wormhole
-verifier: the app on the waiting screen, gnokey-pair at the top of the review.
+After the PAKE, both sides MUST show the same two words derived from the
+wormhole verifier: the app on the waiting screen, gnokey-pair at the top of the
+review.
 The review asks the user to compare them. A matching pair means the review the
 user is reading came from their own phone. An attacker who guesses the code
 (one chance in 65,536) and claims it first would produce different words, and
@@ -609,9 +610,6 @@ channel.
 
 1. **Name** (`gnokey-pair`) and **home**: `contribs/` in the gno repo
    (proposed: it ships and is tested with gnokey) or its own repository.
-2. **Who runs the `wss://` mailbox server,** and under which host name.
-3. **Check words:** a MUST or a SHOULD on the requester side? Proposed: MUST
-   for gnokey-pair, SHOULD for requesters.
-4. **More than one request per channel** (pairing once for a whole session's
+2. **More than one request per channel** (pairing once for a whole session's
    renewals). Deferred until there is demand: one request per code keeps
    gnokey-pair stateless.

@@ -24,9 +24,9 @@ test-deps: $(venv)
 # .github/workflows/ci-gnokey-pair-relay.yml.
 .PHONY: test-relay
 test-relay: $(venv)
-	WORMHOLE_REQUIRE_RELAY=1 go test $(GOTEST_FLAGS) -race ./wormhole/...
+	WORMHOLE_REQUIRE_RELAY=1 go test $(GOTEST_FLAGS) -race ./...
 
-$(venv): wormhole/testdata/requirements.txt
+$(venv): internal/relaytest/requirements.txt
 	python3 -m venv $(venv)
-	$(venv)/bin/pip install --quiet --requirement wormhole/testdata/requirements.txt
+	$(venv)/bin/pip install --quiet --requirement internal/relaytest/requirements.txt
 	touch $(venv)

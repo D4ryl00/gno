@@ -7,6 +7,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gnolang/gno/contribs/gnokey-pair/internal/relaytest"
 )
 
 // drop kills ch's socket without telling the server, like a phone going to
@@ -48,7 +50,7 @@ func generation(ch *Channel) int {
 // The phone loses its socket at each step of a pairing; every time it
 // reattaches, the exchange completes and no message is delivered twice.
 func TestReconnect(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	for _, at := range []string{"before handshake", "before request", "during review", "before received"} {
 		t.Run(at, func(t *testing.T) {
@@ -87,7 +89,7 @@ func TestReconnect(t *testing.T) {
 // The phone is away when the result is posted, and gnokey-pair closes and
 // exits; the phone comes back and still gets the result, once.
 func TestResultOutlivesDesktop(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	ctx := testContext(t, 30*time.Second)
 	desk, phone := pair(t, ctx, relayURL)
@@ -112,7 +114,7 @@ func TestResultOutlivesDesktop(t *testing.T) {
 // Messages sent while disconnected are queued and delivered on reconnect,
 // and Close waits for them.
 func TestSendWhileDisconnected(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	ctx := testContext(t, 30*time.Second)
 	desk, phone := pair(t, ctx, relayURL)
@@ -136,9 +138,9 @@ func TestSendWhileDisconnected(t *testing.T) {
 // Away for longer than the server keeps an abandoned mailbox: the phone
 // reports the channel lost instead of waiting forever.
 func TestMailboxLost(t *testing.T) {
-	needRelay(t)
+	relaytest.Need(t)
 	t.Parallel()
-	url, stop, err := startRelay([]string{"MAILBOX_EXPIRE=0.5"})
+	url, stop, err := relaytest.Start("MAILBOX_EXPIRE=0.5")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +171,7 @@ func TestMailboxLost(t *testing.T) {
 
 // A relay that cannot be reached is reported once the caller gives up.
 func TestRelayUnreachable(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	ctx := testContext(t, 30*time.Second)
 	_, phone := pair(t, ctx, relayURL)
@@ -191,7 +193,7 @@ func TestRelayUnreachable(t *testing.T) {
 // last side closes a mailbox whose nameplate is still claimed, the reference
 // server fails on a foreign key and drops the connection without "closed".
 func TestCloseWithoutReleaseBreaksServer(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	ctx := testContext(t, 10*time.Second)
 	cfg := testConfig(relayURL)

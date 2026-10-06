@@ -1,8 +1,9 @@
 name: ci / gnokey-pair relay
 
 # The contribs matrix (ci-dir-contribs.yml) has no Python venv, so the
-# gnokey-pair wormhole tests that need the reference mailbox server and
-# client skip there. This workflow runs them.
+# gnokey-pair tests that need the reference mailbox server skip there: the
+# wormhole tests and the end-to-end test. This workflow runs them, also when
+# gnokey changes, since the end-to-end test drives the real gnokey.
 
 on:
   push:
@@ -10,10 +11,14 @@ on:
       - master
     paths:
       - contribs/gnokey-pair/**
+      - gno.land/cmd/gnokey/**
+      - tm2/pkg/crypto/keys/client/**
       - .github/workflows/ci-gnokey-pair-relay.yml
   pull_request:
     paths:
       - contribs/gnokey-pair/**
+      - gno.land/cmd/gnokey/**
+      - tm2/pkg/crypto/keys/client/**
       - .github/workflows/ci-gnokey-pair-relay.yml
   workflow_dispatch:
 
@@ -22,7 +27,7 @@ permissions:
 
 jobs:
   test:
-    name: wormhole / reference relay
+    name: wormhole and end to end
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:

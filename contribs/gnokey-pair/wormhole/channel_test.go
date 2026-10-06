@@ -8,10 +8,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/gnolang/gno/contribs/gnokey-pair/internal/relaytest"
 )
 
 func TestPair(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	ctx := testContext(t, 20*time.Second)
 	desk, phone := pair(t, ctx, relayURL)
@@ -42,7 +44,7 @@ func TestPair(t *testing.T) {
 }
 
 func TestMessagesInOrder(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	ctx := testContext(t, 20*time.Second)
 	desk, phone := pair(t, ctx, relayURL)
@@ -56,7 +58,7 @@ func TestMessagesInOrder(t *testing.T) {
 }
 
 func TestWrongCode(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	ctx := testContext(t, 20*time.Second)
 	desk := allocate(t, ctx, testConfig(relayURL))
@@ -74,7 +76,7 @@ func TestWrongCode(t *testing.T) {
 }
 
 func TestHandshakeTimeout(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	desk := allocate(t, testContext(t, 10*time.Second), testConfig(relayURL))
 	err := desk.Handshake(testContext(t, 300*time.Millisecond))
@@ -87,7 +89,7 @@ func TestHandshakeTimeout(t *testing.T) {
 }
 
 func TestThirdSideRefused(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	ctx := testContext(t, 20*time.Second)
 	desk := allocate(t, ctx, testConfig(relayURL))
@@ -104,7 +106,7 @@ func TestThirdSideRefused(t *testing.T) {
 }
 
 func TestNotReady(t *testing.T) {
-	needRelay(t)
+	relayURL := relaytest.Shared(t)
 	t.Parallel()
 	ctx := testContext(t, 10*time.Second)
 	desk := allocate(t, ctx, testConfig(relayURL))
