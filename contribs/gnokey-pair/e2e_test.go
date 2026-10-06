@@ -189,9 +189,10 @@ var (
 	reviewSigner = regexp.MustCompile(`Signer +(g1\w+)`)
 )
 
-// pair runs gnokey-pair against a phone that sends req, approves the review,
-// types the password, and returns what the phone received.
-func (e *e2e) pair(t *testing.T, req protocol.Request) protocol.Result {
+// pair runs gnokey-pair against a phone that sends req, waits for each of
+// review on the terminal, approves, types the password, and returns what the
+// phone received.
+func (e *e2e) pair(t *testing.T, req protocol.Request, review ...*regexp.Regexp) protocol.Result {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -234,6 +235,9 @@ func (e *e2e) pair(t *testing.T, req protocol.Request) protocol.Result {
 	if got := term.wait(t, ctx, reviewSigner)[1]; got != req.Signer {
 		t.Fatalf("review shows signer %s", got)
 	}
+	for _, re := range review {
+		term.wait(t, ctx, re)
+	}
 	term.wait(t, ctx, signPrompt)
 	ptmx.WriteString("y\n")
 	term.wait(t, ctx, passPrompt)
@@ -264,12 +268,30 @@ func (e *e2e) pair(t *testing.T, req protocol.Request) protocol.Result {
 	return res
 }
 
+var e2eFee = std.Fee{GasWanted: 10_000_000, GasFee: std.Coin{Denom: "ugnot", Amount: 100_000}}
+
 func (e *e2e) request(t *testing.T, mode string, msgs ...std.Msg) protocol.Request {
 	t.Helper()
-	tx := std.Tx{Msgs: msgs, Fee: std.Fee{GasWanted: 10_000_000, GasFee: std.Coin{Denom: "ugnot", Amount: 100_000}}}
+	tx := std.Tx{Msgs: msgs, Fee: e2eFee}
 	return protocol.Request{
 		Kind: protocol.KindTx, Mode: mode, ChainID: e.chainID, Signer: e.signer.String(),
 		Tx: txJSON(t, tx), Requester: &protocol.Requester{Name: "e2e"},
+	}
+}
+
+// sendDirect broadcasts msg signed by the signer outside gnokey-pair, as
+// another device holding the identity would.
+func (e *e2e) sendDirect(t *testing.T, msg std.Msg) {
+	t.Helper()
+	key, err := integration.GeneratePrivKeyFromMnemonic(integration.DefaultAccount_Seed, "", 0, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	acc := e.account(t, e.signer)
+	tx := signTx(t, std.Tx{Msgs: []std.Msg{msg}, Fee: e2eFee}, key, e.chainID, acc.AccountNumber, acc.Sequence)
+	bres, err := rpcNode{e.rpc}.Broadcast(context.Background(), tx)
+	if err != nil || bres.CheckTx.IsErr() || bres.DeliverTx.IsErr() {
+		t.Fatalf("%v %+v", err, bres)
 	}
 }
 
@@ -307,6 +329,19 @@ func TestEndToEnd(t *testing.T) {
 		}
 	})
 
+	t.Run("the review shows the session revoked", func(t *testing.T) {
+		res := e.pair(t, e.request(t, protocol.ModeSendTx, auth.MsgRevokeSession{Creator: e.signer, SessionKey: session}),
+			regexp.MustCompile(`Allowed +vm/exec:gno\.land/r/demo/counter`),
+			regexp.MustCompile(`Expires +\d{4}-\d\d-\d\d \d\d:\d\d UTC \(in `))
+		if res.Status != protocol.StatusSuccess {
+			t.Fatalf("%+v", res)
+		}
+		sessions, err := rpcNode{e.rpc}.Sessions(context.Background(), e.signer)
+		if err != nil || len(sessions) != 0 {
+			t.Fatalf("sessions left on chain: %v %+v", err, sessions)
+		}
+	})
+
 	t.Run("signtx returns bytes that broadcast as is", func(t *testing.T) {
 		res := e.pair(t, e.request(t, protocol.ModeSignTx, bank.MsgSend{
 			FromAddress: e.signer, ToAddress: recipient, Amount: std.Coins{{Denom: "ugnot", Amount: 1234}},
@@ -340,6 +375,21 @@ func TestEndToEnd(t *testing.T) {
 		}
 		if after := e.account(t, e.signer); after.Sequence != before.Sequence || !after.Coins.IsEqual(before.Coins) {
 			t.Fatalf("account moved: %+v -> %+v", before, after)
+		}
+	})
+
+	t.Run("the identity sent something since the phone composed the request", func(t *testing.T) {
+		recipient := secp256k1.GenPrivKey().PubKey().Address()
+		req := e.request(t, protocol.ModeSendTx, bank.MsgSend{
+			FromAddress: e.signer, ToAddress: recipient, Amount: std.Coins{{Denom: "ugnot", Amount: 1}},
+		})
+		before := e.account(t, e.signer)
+		e.sendDirect(t, bank.MsgSend{FromAddress: e.signer, ToAddress: recipient, Amount: std.Coins{{Denom: "ugnot", Amount: 1}}})
+		if res := e.pair(t, req); res.Status != protocol.StatusSuccess {
+			t.Fatalf("%+v", res)
+		}
+		if after := e.account(t, e.signer); after.Sequence != before.Sequence+2 {
+			t.Fatalf("sequence %d -> %d", before.Sequence, after.Sequence)
 		}
 	})
 }

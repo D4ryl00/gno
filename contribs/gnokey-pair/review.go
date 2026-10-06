@@ -24,6 +24,7 @@ type review struct {
 	remote     string
 	key        *keyInfo         // nil when gnokey list could not be read
 	params     map[int][]string // MsgCall parameter names by message index
+	sessions   *[]session       // the signer's sessions; nil when unknown
 	balance    std.Coins
 	minFee     *std.Coin // nil when the gas price is unknown
 	sim        simulation
@@ -153,12 +154,47 @@ func (r *review) renderMsg(b *strings.Builder, i int, msg std.Msg) {
 		if m.ExpiresAt == 0 {
 			sub("Expires", "never   warning: valid until revoked")
 		} else {
-			sub("Expires", "%s (in %s)", formatTime(m.ExpiresAt), formatDuration(m.ExpiresAt-r.now.Unix()))
+			sub("Expires", "%s", r.expiry(m.ExpiresAt))
 		}
 	case auth.MsgRevokeSession:
 		fmt.Fprintf(b, "%sRevoke session  %s (%s)\n", n, crypto.PubKeyToBech32(m.SessionKey), m.SessionKey.Address())
+		if r.sessions == nil {
+			sub("", sessionsUnknown)
+			return
+		}
+		for _, s := range *r.sessions {
+			if s.Address == m.SessionKey.Address() {
+				sub("Allowed", "%s", escAll(s.AllowPaths))
+				sub("Expires", "%s", r.expiry(s.ExpiresAt))
+				return
+			}
+		}
+		sub("", "warning: no such session on chain")
 	case auth.MsgRevokeAllSessions:
-		fmt.Fprintf(b, "%sRevoke all sessions\n", n)
+		fmt.Fprintf(b, "%sRevoke all sessions", n)
+		if r.sessions == nil {
+			b.WriteString("\n")
+			sub("", sessionsUnknown)
+			return
+		}
+		fmt.Fprintf(b, "  %s on chain\n", plural(int64(len(*r.sessions)), "session"))
+		for _, s := range *r.sessions {
+			sub("Session", "%s  %s, expires %s", s.Address, escAll(s.AllowPaths), r.expiry(s.ExpiresAt))
+		}
+	}
+}
+
+const sessionsUnknown = "(sessions unknown: the node did not list them)"
+
+// expiry states an absolute expiry and how far it is from now.
+func (r *review) expiry(at int64) string {
+	switch left := at - r.now.Unix(); {
+	case at == 0:
+		return "never"
+	case left <= 0:
+		return formatTime(at) + " (expired)"
+	default:
+		return fmt.Sprintf("%s (in %s)", formatTime(at), formatDuration(left))
 	}
 }
 

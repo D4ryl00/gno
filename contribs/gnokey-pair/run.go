@@ -20,6 +20,7 @@ import (
 	"github.com/gnolang/gno/gno.land/pkg/sdk/vm"
 	"github.com/gnolang/gno/tm2/pkg/amino"
 	"github.com/gnolang/gno/tm2/pkg/crypto"
+	"github.com/gnolang/gno/tm2/pkg/sdk/auth"
 	"github.com/gnolang/gno/tm2/pkg/std"
 )
 
@@ -162,16 +163,23 @@ func (p *pairing) process(ctx context.Context, raw []byte, words string) (*proto
 	}
 	rv.params = map[int][]string{}
 	docs := map[string]map[string][]string{} // one qdoc per realm
+	needSessions := false
 	for i, msg := range req.tx.Msgs {
-		call, ok := msg.(vm.MsgCall)
-		if !ok {
-			continue
+		switch m := msg.(type) {
+		case vm.MsgCall:
+			if _, done := docs[m.PkgPath]; !done {
+				docs[m.PkgPath], _ = n.FuncParams(ctx, m.PkgPath)
+			}
+			if names, ok := docs[m.PkgPath][m.Func]; ok {
+				rv.params[i] = names
+			}
+		case auth.MsgRevokeSession, auth.MsgRevokeAllSessions:
+			needSessions = true
 		}
-		if _, done := docs[call.PkgPath]; !done {
-			docs[call.PkgPath], _ = n.FuncParams(ctx, call.PkgPath)
-		}
-		if names, ok := docs[call.PkgPath][call.Func]; ok {
-			rv.params[i] = names
+	}
+	if needSessions {
+		if s, err := n.Sessions(ctx, req.signer); err == nil {
+			rv.sessions = &s
 		}
 	}
 	rv.sim = simulateUnsigned(ctx, n, req.tx, acc, key)

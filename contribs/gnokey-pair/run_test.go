@@ -25,6 +25,7 @@ type fakeNode struct {
 	chainID      string
 	acc          *std.BaseAccount
 	signedSimErr string // the signed simulation fails with it
+	sessions     []session
 
 	mu         sync.Mutex
 	broadcasts []std.Tx
@@ -37,6 +38,10 @@ func (n *fakeNode) Account(context.Context, crypto.Address) (*std.BaseAccount, e
 
 func (n *fakeNode) GasPrice(context.Context) (std.GasPrice, error) {
 	return std.GasPrice{Gas: 1000, Price: std.Coin{Denom: "ugnot", Amount: 1}}, nil
+}
+
+func (n *fakeNode) Sessions(context.Context, crypto.Address) ([]session, error) {
+	return n.sessions, nil
 }
 
 func (n *fakeNode) FuncParams(context.Context, string) (map[string][]string, error) {

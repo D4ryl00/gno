@@ -20,6 +20,15 @@ func esc(s string) string {
 	return q[1 : len(q)-1]
 }
 
+// escAll escapes each string and joins them with commas.
+func escAll(ss []string) string {
+	parts := make([]string, len(ss))
+	for i, s := range ss {
+		parts[i] = esc(s)
+	}
+	return strings.Join(parts, ", ")
+}
+
 // quote is esc in double quotes.
 func quote(s string) string { return strconv.Quote(s) }
 

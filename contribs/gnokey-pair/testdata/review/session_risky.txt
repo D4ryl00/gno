@@ -23,7 +23,9 @@ Action      sign and broadcast
    Allowed      vm/exec:gno.land/r/demo/game
    Budget       none: the session cannot spend, not even its own gas
    Expires      2026-11-04 14:00 UTC (in 30 days)
-4. Revoke all sessions
+4. Revoke all sessions  2 sessions on chain
+   Session      g10amswpv0vhefmz2yatxutskqtpzj6y6d8gj6hw  *, expires never
+   Session      g122jlf685ds9yml0wc59c5ufc660pfeccq89tlk  vm/exec:gno.land/r/a, bank/send, expires 2026-10-05 15:00 UTC (in 1 hour)
 
 Fee         0.0021 GNOT (gas 2,000,000), balance 152.3 GNOT
 Simulation  ok, 1,412,330 gas
