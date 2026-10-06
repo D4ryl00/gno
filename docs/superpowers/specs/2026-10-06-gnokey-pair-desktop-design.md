@@ -25,8 +25,9 @@ Two ways to use the relay, chosen in Settings:
   on the computer first.
 
 Unchanged: **`gnokey` is not modified** and stays the only program that signs;
-the protocol, the relay and gnokey-mobile stay as they are; the CLI keeps
-working.
+the CLI keeps working. The app needs no protocol change of its own: signing
+offline and signing by hand, which it offers, are additions to the base design
+(optional fields), made there for the CLI and gnokey-mobile too.
 
 ## Decision
 
@@ -64,7 +65,8 @@ In:
 - macOS 13 and later (Apple silicon and Intel), Linux desktops with X11 or
   Wayland (GNOME, KDE Plasma, XFCE, Cinnamon).
 - Everything the CLI does: `sendtx` and `signtx`, the review, the checks
-  before and after signing (base design, Pipeline).
+  before and after signing (base design, Pipeline), signing offline on a
+  local network and signing by hand (base design, sections of those names).
 - Start at login, the two connection modes, settings, notifications.
 
 Out:
@@ -77,7 +79,7 @@ Out:
 - Bundling `gnokey`. The app runs the gnokey the user installed and shows
   which one (as the CLI prints it).
 - Auto-update. Releases ship as packages; updates go through them.
-- Any change to gnokey-mobile or to the protocol.
+- Protocol or gnokey-mobile changes beyond the base design's.
 
 ## The app
 
@@ -226,9 +228,15 @@ The content is the CLI's review, field for field: the same checks, warnings
 becomes a model (Architecture) that the CLI renders as text and the app as
 widgets.
 
+The approve button follows Settings → Signing (Signing by hand, below):
+[Sign…] by default, [Copy gnokey command] when the user signs by hand. A small
+link under it takes the other path for this request only ("Sign it myself" /
+"Let gnokey-pair sign"), so the choice never costs an extra question.
+
 Against approving by accident:
 
-- [Sign…] stays disabled for one second after the window appears or changes.
+- The approve button stays disabled for one second after the window appears
+  or changes.
 - Neither button is the default: Return does nothing, Escape declines.
 - One request at a time: a channel carries one request, and in automatic mode
   the next code is allocated only after it is done.
@@ -258,9 +266,29 @@ result as today.
 **What differs from the CLI.** In the CLI the password goes from the terminal
 to gnokey and never crosses gnokey-pair. Here it crosses the app's memory for
 the length of one write. The app never logs, stores or sends it, and keeps
-it only in a byte slice it zeroes. Running gnokey in a terminal window instead
-would keep the CLI's property, at the cost of a terminal popping up for every
-signature (Alternatives).
+it only in a byte slice it zeroes. A user who wants the password never to
+reach gnokey-pair signs by hand.
+
+### Signing by hand
+
+Settings → Signing → **When I approve**: (•) gnokey-pair signs with gnokey,
+( ) I run the gnokey command myself. Off by default. The command is the base
+design's (Signing by hand): sign, dry-run and broadcast for `sendtx` with a
+node; `gnokey sign` alone when the signed transaction goes back to the phone
+(`signtx`, or signing offline).
+
+[Copy gnokey command] approves the request, puts the command on the
+clipboard, and shows it in the window, selectable:
+
+- **Full command**: "Copied. Run it in a terminal: it signs and broadcasts.
+  Your phone watches the chain." The phone has its answer (`manual`); [Done]
+  removes the transaction file.
+- **`gnokey sign` alone**: "Copied. Run it in a terminal; gnokey-pair sends the
+  signed transaction to your phone." The window waits for the signed file,
+  then checks it and answers the phone, as when gnokey-pair signs. [Cancel]
+  answers `cancelled`.
+
+The command carries no secret, so the clipboard holds nothing sensitive.
 
 ### Settings
 
@@ -269,8 +297,11 @@ signature (Alternatives).
            Connect to the relay   (•) When I ask   ( ) When gnokey-pair starts
            Wait for the phone     10 minutes (when I ask)
            Notifications                          [x]
+ Signing   When I approve   (•) gnokey-pair signs with gnokey
+                            ( ) I run the gnokey command myself
  Networks  dev        http://127.0.0.1:26657                       [Edit] [Remove]
            topaz-1    https://rpc.topaz.testnets.gno.land          [Edit] [Remove]
+           gnoland-1  offline: no node, the phone broadcasts       [Edit] [Remove]
            Unknown chain: ( ) ask each time  (•) ask, then remember
  gnokey    /Users/remi/go/bin/gnokey  (1.2.0)                      [Change…]
            Home: gnokey's default                                  [Change…]
@@ -282,6 +313,14 @@ suggests an RPC. For a chain id in the list, the app uses the listed node and
 ignores the suggestion, as `-remote` does. For an unknown chain the review
 shows the suggested RPC and asks to use it, and by default remembers the
 answer. The base design's rules apply: the node's chain id must match.
+
+A chain can be set to **offline** instead of a node: the CLI's `-offline` for
+that chain. The review then lists what was not checked (base design, Signing
+offline), and the signed transaction goes back to the phone, which
+broadcasts. A node that does not answer is never turned into offline on its
+own; the review says the node failed and offers to edit the network. For a
+computer without internet, the relay is set to one on the local network
+(Settings → Relay; README, "Running your own relay").
 
 Settings live in `~/Library/Application Support/gnokey-pair/settings.json` on
 macOS and `$XDG_CONFIG_HOME/gnokey-pair/settings.json` on Linux.
@@ -417,7 +456,12 @@ an acceptable trade (Alternatives).
 - **Autostart.** The XDG entry written and removed in a temporary
   `XDG_CONFIG_HOME`; on macOS, `SMAppService` checked by hand.
 - **Windows.** Fyne's `test` package drives the review and sign windows:
-  [Sign…] disabled at first, Return not approving, Escape declining.
+  the approve button disabled at first, Return not approving, Escape
+  declining; the button and link following the Signing setting; the command
+  copied and shown, [Done] removing the file, the wait for a signed file.
+- **Offline chain.** A chain set to offline signs with the phone's account
+  and returns `signedtx`; an unreachable node on a chain with a node stays an
+  error.
 - **By hand**: macOS 14 and 15; Ubuntu 24.04 (GNOME with AppIndicator),
   Fedora (GNOME without it), KDE Plasma; with a local key and a Ledger; in
   both relay modes.
