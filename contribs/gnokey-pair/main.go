@@ -55,6 +55,7 @@ func (c *config) RegisterFlags(fs *flag.FlagSet) {
 	fs.StringVar(&c.home, "home", "", "passed to gnokey as -home")
 	fs.DurationVar(&c.timeout, "timeout", 10*time.Minute, "how long to wait for the phone")
 	fs.DurationVar(&c.linger, "linger", 10*time.Minute, "after answering, how long to wait for the phone to read the answer")
+	fs.BoolVar(&c.manual, "manual", false, "print the gnokey command instead of running gnokey")
 }
 
 func execPair(ctx context.Context, cfg config) error {

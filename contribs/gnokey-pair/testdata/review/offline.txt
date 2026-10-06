@@ -1,0 +1,26 @@
+gnokey-pair: request from your phone
+Check words:  aardvark  adroitness      (compare with the phone; stop if they differ)
+
+Offline     your phone asked to sign without checking against the chain
+Requester   "Gnokey Mobile" for "game.example"   (claimed, not verified)
+Network     test-chain   (not checked)
+Signer      g1d0engnjvdkd078x8h8vupmfr5k7n28ufqtllgw  "main"
+Account     number 12, sequence 5, from the phone
+Action      sign only; the phone broadcasts
+
+1. Create session  gpub1pgfj7ard9eg82cjtv4u4xetrwqer2dntxyfzxz3pqtdqp6zyrdwpxvc9srvcstukkq45e6395nv65xjk7djvp2cnnnp2yr7a2u9 (g122jlf685ds9yml0wc59c5ufc660pfeccq89tlk)
+   Allowed      vm/exec:gno.land/r/demo/game
+   Budget       5 GNOT per hour, at most 3,600 GNOT over 30 days
+   Expires      2026-11-04 14:00 UTC (in 30 days)
+2. Revoke session  gpub1pgfj7ard9eg82cjtv4u4xetrwqer2dntxyfzxz3pqt80wdcmdez8z2wzx9lcudmntptx7pxr9eaftj27uww8cqxkqqnpzvdpyc9 (g10amswpv0vhefmz2yatxutskqtpzj6y6d8gj6hw)
+                (not shown offline: no node to read the sessions from)
+3. Revoke all sessions
+                (not shown offline: no node to read the sessions from)
+4. Call  gno.land/r/demo/game.Play
+                #1 = "rock"
+                #2 = "3"
+                (parameter names unavailable)
+
+Fee         0.0021 GNOT (gas 2,000,000); balance unknown
+Simulation  not run
+

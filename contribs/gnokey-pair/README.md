@@ -41,6 +41,25 @@ signed bytes back to the phone.
 | `-home` | gnokey's | passed to gnokey |
 | `-timeout` | `10m` | wait for the phone |
 | `-linger` | `10m` | after answering, wait for the phone to confirm it read the answer |
+| `-manual` | off | print the gnokey command instead of running gnokey (see below) |
+
+### Signing by hand
+
+With `-manual`, approving the review prints the gnokey command instead of
+running gnokey, for you to run in another terminal. For `sendtx` it signs,
+dry-runs and broadcasts, and the phone watches the chain; gnokey-pair removes
+the transaction file when you press Enter. For `signtx` it only signs:
+gnokey-pair waits for the signed file, checks it is what you approved, and
+sends it to the phone.
+
+### Signing offline
+
+On a computer without internet, on the same local network as the phone, run a
+relay there (below) and start `gnokey-pair -relay ws://<lan address>:4000/v1`.
+The phone asks for a signature only (`signtx` marked `offline`, with the
+account number and sequence): gnokey-pair contacts no node, says so in the
+review, and the phone broadcasts. A request without that marker still needs a
+node.
 
 ## Running your own relay
 

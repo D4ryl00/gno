@@ -54,6 +54,23 @@ func TestParseRequest(t *testing.T) {
 		{"expired session", requestJSON(t, newTx(expired), nil), "expired"},
 		{"other signer", requestJSON(t, newTx(otherCall), nil), "signed by"},
 		{"extra signer", requestJSON(t, newTx(callMsg(), otherCall), nil), "signed by"},
+		{"valid offline", requestJSON(t, newTx(callMsg()), offline), ""},
+		{"offline sendtx", requestJSON(t, newTx(callMsg()), func(r *protocol.Request) {
+			offline(r)
+			r.Mode = protocol.ModeSendTx
+		}), "nobody would broadcast"},
+		{"offline without account", requestJSON(t, newTx(callMsg()), func(r *protocol.Request) {
+			offline(r)
+			r.Account = nil
+		}), "needs the account number and sequence"},
+		{"offline bad number", requestJSON(t, newTx(callMsg()), func(r *protocol.Request) {
+			offline(r)
+			r.Account.Number = "-1"
+		}), "account number"},
+		{"offline bad sequence", requestJSON(t, newTx(callMsg()), func(r *protocol.Request) {
+			offline(r)
+			r.Account.Sequence = "3.5"
+		}), "account sequence"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
@@ -64,6 +81,9 @@ func TestParseRequest(t *testing.T) {
 				}
 				if req.signer != signerAddr {
 					t.Fatalf("signer %s", req.signer)
+				}
+				if req.Offline && (req.accountNumber != 7 || req.sequence != 3) {
+					t.Fatalf("account %d, sequence %d", req.accountNumber, req.sequence)
 				}
 				return
 			}

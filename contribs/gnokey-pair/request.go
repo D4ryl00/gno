@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/gnolang/gno/contribs/gnokey-pair/protocol"
@@ -30,6 +31,8 @@ type txRequest struct {
 	protocol.Request
 	tx     std.Tx
 	signer crypto.Address
+
+	accountNumber, sequence uint64 // from Account, when Offline
 }
 
 // parseRequest decodes and validates a request before anything is shown:
@@ -56,6 +59,20 @@ func parseRequest(raw []byte, now time.Time) (*txRequest, error) {
 		return nil, invalid("signer: %v", err)
 	}
 	r.signer = signer
+	if r.Offline {
+		if r.Mode != protocol.ModeSignTx {
+			return nil, invalid("offline needs mode %s: nobody would broadcast", protocol.ModeSignTx)
+		}
+		if r.Account == nil {
+			return nil, invalid("signing offline needs the account number and sequence; update Gnokey Mobile")
+		}
+		if r.accountNumber, err = strconv.ParseUint(r.Account.Number, 10, 64); err != nil {
+			return nil, invalid("account number %s", quote(r.Account.Number))
+		}
+		if r.sequence, err = strconv.ParseUint(r.Account.Sequence, 10, 64); err != nil {
+			return nil, invalid("account sequence %s", quote(r.Account.Sequence))
+		}
+	}
 	switch {
 	case len(r.Request.Tx) == 0 || string(r.Request.Tx) == "null":
 		return nil, invalid("missing tx")
