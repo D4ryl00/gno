@@ -25,9 +25,10 @@ import (
 )
 
 var versions = protocol.Versions{
-	V:     1,
-	Kinds: []string{protocol.KindTx},
-	Modes: []string{protocol.ModeSendTx, protocol.ModeSignTx},
+	V:        1,
+	Kinds:    []string{protocol.KindTx},
+	Modes:    []string{protocol.ModeSendTx, protocol.ModeSignTx},
+	Features: []string{protocol.FeatureOffline},
 }
 
 const (
@@ -44,6 +45,7 @@ type config struct {
 	home    string
 	timeout time.Duration
 	linger  time.Duration
+	manual  bool // print the gnokey command instead of running gnokey
 }
 
 // pairing serves one request: one code, one request, one result.
@@ -54,6 +56,8 @@ type pairing struct {
 	keys keybase
 	dial func(remote string) (node, error)
 	now  func() time.Time
+
+	pending string // a transaction file the user's gnokey command still needs
 }
 
 func (p *pairing) printf(format string, args ...any) { fmt.Fprintf(p.out, format, args...) }
@@ -109,6 +113,10 @@ func (p *pairing) run(ctx context.Context) error {
 		defer cancel()
 		ch.Recv(lctx) // received; nothing depends on it
 	}
+	if p.pending != "" {
+		defer os.RemoveAll(p.pending)
+		p.ask(ctx, "Press Enter once you have run the command; the transaction file is then removed. ")
+	}
 	return err
 }
 
@@ -138,23 +146,62 @@ func (p *pairing) process(ctx context.Context, raw []byte, words string) (*proto
 	if err != nil {
 		return nil, err
 	}
-	remote, n, err := p.network(ctx, req)
+	rv := review{req: req, checkWords: words, now: now}
+	var n node
+	var acc *std.BaseAccount
+	if req.Offline {
+		// The phone asked for no network operation: the account is its own.
+		if rv.key, err = p.findKey(ctx, req.signer); err != nil {
+			return nil, err
+		}
+		acc = &std.BaseAccount{Address: req.signer, AccountNumber: req.accountNumber, Sequence: req.sequence}
+	} else if n, acc, err = p.inspect(ctx, &rv); err != nil {
+		return nil, err
+	}
+	p.printf("\n")
+	rv.render(p.out)
+
+	question := "Sign? [y/N] "
+	if p.cfg.manual {
+		question = "Approve and print the gnokey command? [y/N] "
+	}
+	ok, err := p.ask(ctx, question)
 	if err != nil {
 		return nil, err
 	}
-	key, err := p.findKey(ctx, req.signer)
+	if !ok {
+		return nil, errCancelled
+	}
+	if p.cfg.manual {
+		return p.byHand(ctx, req, acc, rv.remote)
+	}
+	signed, err := p.sign(ctx, req, acc, rv.key)
 	if err != nil {
 		return nil, err
+	}
+	return p.deliver(ctx, n, req.Mode, signed)
+}
+
+// inspect reads what the review needs from the chain: the node, the signer's
+// key and account, and what the transaction would do.
+func (p *pairing) inspect(ctx context.Context, rv *review) (node, *std.BaseAccount, error) {
+	req := rv.req
+	remote, n, err := p.network(ctx, req)
+	if err != nil {
+		return nil, nil, err
+	}
+	rv.remote = remote
+	if rv.key, err = p.findKey(ctx, req.signer); err != nil {
+		return nil, nil, err
 	}
 	acc, err := n.Account(ctx, req.signer)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if acc == nil {
-		return nil, failf(protocol.CodeTxFailed, "%s has no account on %s: it has never received coins", req.signer, req.ChainID)
+		return nil, nil, failf(protocol.CodeTxFailed, "%s has no account on %s: it has never received coins", req.signer, req.ChainID)
 	}
-
-	rv := review{req: req, checkWords: words, remote: remote, key: key, balance: acc.Coins, now: now}
+	rv.balance = acc.Coins
 	if gp, err := n.GasPrice(ctx); err == nil {
 		rv.minFee = minFee(req.tx.Fee.GasWanted, gp)
 	}
@@ -179,22 +226,8 @@ func (p *pairing) process(ctx context.Context, raw []byte, words string) (*proto
 			rv.sessions = &s
 		}
 	}
-	rv.sim = simulateUnsigned(ctx, n, req.tx, acc, key)
-	p.printf("\n")
-	rv.render(p.out)
-
-	ok, err := p.ask(ctx, "Sign? [y/N] ")
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, errCancelled
-	}
-	signed, err := p.sign(ctx, req, acc, key)
-	if err != nil {
-		return nil, err
-	}
-	return p.deliver(ctx, n, req.Mode, signed)
+	rv.sim = simulateUnsigned(ctx, n, req.tx, acc, rv.key)
+	return n, acc, nil
 }
 
 // deliver returns the signed bytes (signtx), or simulates and broadcasts
@@ -329,19 +362,11 @@ func simulateUnsigned(ctx context.Context, n node, tx std.Tx, acc *std.BaseAccou
 // verifies what it wrote.
 func (p *pairing) sign(ctx context.Context, req *txRequest, acc *std.BaseAccount, key *keyInfo) (std.Tx, error) {
 	var signed std.Tx
-	dir, err := os.MkdirTemp("", "gnokey-pair-") // 0700
+	dir, path, err := writeTx(req.tx)
 	if err != nil {
 		return signed, err
 	}
 	defer os.RemoveAll(dir)
-	path := filepath.Join(dir, "tx.json")
-	bz, err := amino.MarshalJSON(req.tx)
-	if err != nil {
-		return signed, err
-	}
-	if err := os.WriteFile(path, bz, 0o600); err != nil {
-		return signed, err
-	}
 	if key != nil && key.Type == "ledger" {
 		p.printf("Confirm on the Ledger.\n")
 	}
@@ -352,7 +377,8 @@ func (p *pairing) sign(ctx context.Context, req *txRequest, acc *std.BaseAccount
 	case err != nil:
 		return signed, failf(protocol.CodeTxFailed, "%v", err)
 	}
-	if bz, err = os.ReadFile(path); err != nil {
+	bz, err := os.ReadFile(path)
+	if err != nil {
 		return signed, err
 	}
 	if err := amino.UnmarshalJSON(bz, &signed); err != nil {
@@ -362,6 +388,24 @@ func (p *pairing) sign(ctx context.Context, req *txRequest, acc *std.BaseAccount
 		return signed, failf(protocol.CodeTxFailed, "gnokey produced something else than what you approved, so nothing is sent: %v", err)
 	}
 	return signed, nil
+}
+
+// writeTx writes the unsigned transaction to tx.json in a fresh private
+// directory (0700, the file 0600), which the caller removes.
+func writeTx(tx std.Tx) (dir, path string, err error) {
+	bz, err := amino.MarshalJSON(tx)
+	if err != nil {
+		return "", "", err
+	}
+	if dir, err = os.MkdirTemp("", "gnokey-pair-"); err != nil {
+		return "", "", err
+	}
+	path = filepath.Join(dir, "tx.json")
+	if err := os.WriteFile(path, bz, 0o600); err != nil {
+		os.RemoveAll(dir)
+		return "", "", err
+	}
+	return dir, path, nil
 }
 
 // ask prints a yes/no question; only a typed y or yes means yes. Its reader

@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -187,12 +189,37 @@ var (
 	signPrompt   = regexp.MustCompile(`Sign\? \[y/N\]`)
 	passPrompt   = regexp.MustCompile(`Enter password`)
 	reviewSigner = regexp.MustCompile(`Signer +(g1\w+)`)
+	manualPrompt = regexp.MustCompile(`Approve and print the gnokey command\? \[y/N\]`)
+	fullCommand  = regexp.MustCompile(`(?s)watches the chain\.\r?\n\r?\n(.+?)\r?\n\r?\nDone\.`)
+	enterPrompt  = regexp.MustCompile(`Press Enter once you have run the command`)
 )
+
+// user plays the person at the computer: approve after the review, finish
+// once the phone has its answer.
+type user struct {
+	edit    func(*config)
+	approve func(t *testing.T, ctx context.Context, term *terminal, ptmx *os.File)
+	finish  func(t *testing.T, ctx context.Context, term *terminal, ptmx *os.File)
+}
+
+// typesPassword approves and types the password to the gnokey gnokey-pair runs.
+func typesPassword(t *testing.T, ctx context.Context, term *terminal, ptmx *os.File) {
+	t.Helper()
+	term.wait(t, ctx, signPrompt)
+	ptmx.WriteString("y\n")
+	term.wait(t, ctx, passPrompt)
+	ptmx.WriteString(e2ePassword + "\n")
+}
 
 // pair runs gnokey-pair against a phone that sends req, waits for each of
 // review on the terminal, approves, types the password, and returns what the
 // phone received.
 func (e *e2e) pair(t *testing.T, req protocol.Request, review ...*regexp.Regexp) protocol.Result {
+	t.Helper()
+	return e.pairAs(t, user{approve: typesPassword}, req, review...)
+}
+
+func (e *e2e) pairAs(t *testing.T, u user, req protocol.Request, review ...*regexp.Regexp) protocol.Result {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -204,8 +231,12 @@ func (e *e2e) pair(t *testing.T, req protocol.Request, review ...*regexp.Regexp)
 	defer tty.Close()
 	term := newTerminal(ptmx)
 
+	cfg := config{remote: e.remote, relay: e.relay, gnokey: e.gnokey, timeout: time.Minute, linger: 30 * time.Second}
+	if u.edit != nil {
+		u.edit(&cfg)
+	}
 	p := &pairing{
-		cfg:  config{remote: e.remote, relay: e.relay, gnokey: e.gnokey, timeout: time.Minute, linger: 30 * time.Second},
+		cfg:  cfg,
 		in:   bufio.NewReader(tty),
 		out:  tty,
 		keys: &gnokeyBin{path: e.gnokey, home: e.home, stdin: tty, stdout: tty, stderr: tty},
@@ -238,10 +269,7 @@ func (e *e2e) pair(t *testing.T, req protocol.Request, review ...*regexp.Regexp)
 	for _, re := range review {
 		term.wait(t, ctx, re)
 	}
-	term.wait(t, ctx, signPrompt)
-	ptmx.WriteString("y\n")
-	term.wait(t, ctx, passPrompt)
-	ptmx.WriteString(e2ePassword + "\n")
+	u.approve(t, ctx, term, ptmx)
 
 	b, err := phone.Recv(ctx)
 	if err != nil {
@@ -257,6 +285,9 @@ func (e *e2e) pair(t *testing.T, req protocol.Request, review ...*regexp.Regexp)
 	}
 	if err := phone.Close(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if u.finish != nil {
+		u.finish(t, ctx, term, ptmx)
 	}
 	err = <-runErr
 	term.mu.Lock()
@@ -392,4 +423,90 @@ func TestEndToEnd(t *testing.T) {
 			t.Fatalf("sequence %d -> %d", before.Sequence, after.Sequence)
 		}
 	})
+
+	t.Run("offline signs with the phone's account and reaches no node", func(t *testing.T) {
+		recipient := secp256k1.GenPrivKey().PubKey().Address()
+		acc := e.account(t, e.signer)
+		req := e.request(t, protocol.ModeSignTx, bank.MsgSend{
+			FromAddress: e.signer, ToAddress: recipient, Amount: std.Coins{{Denom: "ugnot", Amount: 4321}},
+		})
+		req.Offline = true
+		req.Account = &protocol.Account{Number: strconv.FormatUint(acc.AccountNumber, 10), Sequence: strconv.FormatUint(acc.Sequence, 10)}
+		noNode := user{approve: typesPassword, edit: func(c *config) { c.remote = "http://127.0.0.1:1" }}
+		res := e.pairAs(t, noNode, req, regexp.MustCompile(`Account +number \d+, sequence \d+, from the phone`))
+		if res.Status != protocol.StatusSuccess || res.SignedTx == "" {
+			t.Fatalf("%+v", res)
+		}
+		bz, err := base64.StdEncoding.DecodeString(res.SignedTx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		bres, err := e.rpc.BroadcastTxCommit(context.Background(), bz)
+		if err != nil || bres.CheckTx.IsErr() || bres.DeliverTx.IsErr() {
+			t.Fatalf("%v %+v", err, bres)
+		}
+		if acc := e.account(t, recipient); acc == nil || acc.Coins.AmountOf("ugnot") != 4321 {
+			t.Fatalf("recipient %+v", acc)
+		}
+	})
+
+	t.Run("by hand, the printed command signs and broadcasts", func(t *testing.T) {
+		recipient := secp256k1.GenPrivKey().PubKey().Address()
+		var path string
+		byHand := user{
+			edit: func(c *config) { c.manual, c.home = true, e.home },
+			approve: func(t *testing.T, ctx context.Context, term *terminal, ptmx *os.File) {
+				t.Helper()
+				term.wait(t, ctx, manualPrompt)
+				ptmx.WriteString("y\n")
+				command := strings.ReplaceAll(term.wait(t, ctx, fullCommand)[1], "\r\n", "\n")
+				path = txPathArg.FindStringSubmatch(command)[1]
+				runInTerminal(t, ctx, command)
+			},
+			finish: func(t *testing.T, ctx context.Context, term *terminal, ptmx *os.File) {
+				t.Helper()
+				term.wait(t, ctx, enterPrompt)
+				ptmx.WriteString("\n")
+			},
+		}
+		res := e.pairAs(t, byHand, e.request(t, protocol.ModeSendTx, bank.MsgSend{
+			FromAddress: e.signer, ToAddress: recipient, Amount: std.Coins{{Denom: "ugnot", Amount: 5678}},
+		}))
+		if res.Status != protocol.StatusSuccess || !res.Manual || res.Hash != "" {
+			t.Fatalf("%+v", res)
+		}
+		if acc := e.account(t, recipient); acc == nil || acc.Coins.AmountOf("ugnot") != 5678 {
+			t.Fatalf("recipient %+v", acc)
+		}
+		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("%s left behind: %v", path, err)
+		}
+	})
+}
+
+// runInTerminal runs command with sh in a terminal of its own, as the user
+// would in another window, and types the password gnokey asks for.
+func runInTerminal(t *testing.T, ctx context.Context, command string) {
+	t.Helper()
+	ptmx, tty, err := pty.Open()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ptmx.Close()
+	defer tty.Close()
+	term := newTerminal(ptmx)
+	cmd := exec.CommandContext(ctx, "sh", "-c", command)
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, tty, tty
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	term.wait(t, ctx, passPrompt)
+	ptmx.WriteString(e2ePassword + "\n")
+	err = cmd.Wait()
+	term.mu.Lock()
+	t.Logf("$ %s\n%s", command, term.buf.String())
+	term.mu.Unlock()
+	if err != nil {
+		t.Fatalf("the printed command failed: %v", err)
+	}
 }

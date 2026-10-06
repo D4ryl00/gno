@@ -54,6 +54,9 @@ func (r *review) render(w io.Writer) {
 	tx := r.req.tx
 	b.WriteString("gnokey-pair: request from your phone\n")
 	fmt.Fprintf(&b, "Check words:  %s      (compare with the phone; stop if they differ)\n\n", strings.Join(strings.Fields(r.checkWords), "  "))
+	if r.req.Offline {
+		line(&b, topColumn, "Offline", "your phone asked to sign without checking against the chain")
+	}
 
 	switch rq := r.req.Requester; {
 	case rq == nil || rq.Name == "" && rq.For == "":
@@ -63,7 +66,11 @@ func (r *review) render(w io.Writer) {
 	default:
 		line(&b, topColumn, "Requester", "%s for %s   (claimed, not verified)", quote(rq.Name), quote(rq.For))
 	}
-	line(&b, topColumn, "Network", "%s via %s", esc(r.req.ChainID), esc(r.remote))
+	if r.req.Offline {
+		line(&b, topColumn, "Network", "%s   (not checked)", esc(r.req.ChainID))
+	} else {
+		line(&b, topColumn, "Network", "%s via %s", esc(r.req.ChainID), esc(r.remote))
+	}
 	signer := r.req.signer.String()
 	if r.key != nil {
 		signer += "  " + quote(r.key.Name)
@@ -72,6 +79,9 @@ func (r *review) render(w io.Writer) {
 		}
 	}
 	line(&b, topColumn, "Signer", "%s", signer)
+	if r.req.Offline {
+		line(&b, topColumn, "Account", "number %d, sequence %d, from the phone", r.req.accountNumber, r.req.sequence)
+	}
 	if r.req.Mode == protocol.ModeSignTx {
 		line(&b, topColumn, "Action", "sign only; the phone broadcasts")
 	} else {
@@ -88,15 +98,22 @@ func (r *review) render(w io.Writer) {
 		line(&b, topColumn, "Memo", "%s", quote(tx.Memo))
 	}
 	fee := tx.Fee.GasFee
-	line(&b, topColumn, "Fee", "%s (gas %s), balance %s", formatCoin(fee), formatInt(tx.Fee.GasWanted),
-		formatAmount(big.NewInt(r.balance.AmountOf(fee.Denom)), fee.Denom))
-	if fee.Amount > r.balance.AmountOf(fee.Denom) {
-		line(&b, topColumn, "", "warning: the balance cannot pay this fee")
+	switch {
+	case r.req.Offline:
+		line(&b, topColumn, "Fee", "%s (gas %s); balance unknown", formatCoin(fee), formatInt(tx.Fee.GasWanted))
+	default:
+		line(&b, topColumn, "Fee", "%s (gas %s), balance %s", formatCoin(fee), formatInt(tx.Fee.GasWanted),
+			formatAmount(big.NewInt(r.balance.AmountOf(fee.Denom)), fee.Denom))
+		if fee.Amount > r.balance.AmountOf(fee.Denom) {
+			line(&b, topColumn, "", "warning: the balance cannot pay this fee")
+		}
 	}
 	if r.minFee != nil && r.minFee.Denom == fee.Denom && big.NewInt(fee.Amount).Cmp(new(big.Int).Mul(big.NewInt(r.minFee.Amount), big.NewInt(10))) > 0 {
 		line(&b, topColumn, "", "warning: more than 10 times the chain's minimum, %s", formatCoin(*r.minFee))
 	}
 	switch {
+	case r.req.Offline:
+		line(&b, topColumn, "Simulation", "not run")
 	case r.sim.skipped != "":
 		line(&b, topColumn, "Simulation", "not run: %s", esc(r.sim.skipped))
 	case r.sim.err != "":
@@ -159,7 +176,7 @@ func (r *review) renderMsg(b *strings.Builder, i int, msg std.Msg) {
 	case auth.MsgRevokeSession:
 		fmt.Fprintf(b, "%sRevoke session  %s (%s)\n", n, crypto.PubKeyToBech32(m.SessionKey), m.SessionKey.Address())
 		if r.sessions == nil {
-			sub("", sessionsUnknown)
+			sub("", r.sessionsUnknown())
 			return
 		}
 		for _, s := range *r.sessions {
@@ -174,7 +191,7 @@ func (r *review) renderMsg(b *strings.Builder, i int, msg std.Msg) {
 		fmt.Fprintf(b, "%sRevoke all sessions", n)
 		if r.sessions == nil {
 			b.WriteString("\n")
-			sub("", sessionsUnknown)
+			sub("", r.sessionsUnknown())
 			return
 		}
 		fmt.Fprintf(b, "  %s on chain\n", plural(int64(len(*r.sessions)), "session"))
@@ -184,7 +201,12 @@ func (r *review) renderMsg(b *strings.Builder, i int, msg std.Msg) {
 	}
 }
 
-const sessionsUnknown = "(sessions unknown: the node did not list them)"
+func (r *review) sessionsUnknown() string {
+	if r.req.Offline {
+		return "(not shown offline: no node to read the sessions from)"
+	}
+	return "(sessions unknown: the node did not list them)"
+}
 
 // expiry states an absolute expiry and how far it is from now.
 func (r *review) expiry(at int64) string {

@@ -2,8 +2,8 @@
 
 Design doc. Status: accepted. The desktop side is implemented in
 `contribs/gnokey-pair`, the gnokey-mobile side on its `feat/send-to-computer`
-branch. Signing offline and signing by hand (below) are designed, not
-implemented.
+branch. Signing offline and signing by hand (below) are implemented in
+gnokey-pair; their gnokey-mobile side is not.
 
 The GnoConnect sections cited below (launch links, `signtx`, sessions,
 "Obtaining the identity's signature") are in `docs/resources/gnoconnect.md` as
@@ -483,8 +483,8 @@ access. The phone asks for a signature only, and broadcasts it itself.
   Simulation  not run
   ```
 
-  A revocation shows the revoked key with "its allow entries and expiry
-  cannot be shown offline"; a call shows positional arguments.
+  A revocation shows the revoked key with "not shown offline: no node to read
+  the sessions from"; a call shows positional arguments.
 - **Why the phone may ask for fewer checks.** It is the user's own wallet,
   authenticated by the code and the check words; a GnoConnect producer cannot
   set the marker, which the wallet adds itself. The review says what was not

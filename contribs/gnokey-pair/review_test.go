@@ -95,6 +95,15 @@ func TestReviewGolden(t *testing.T) {
 			rv.key = nil
 			return rv
 		},
+		"offline": func() review {
+			// What the pipeline knows when the phone asks for no network operation.
+			rv := baseReview(createSessionMsg(), auth.MsgRevokeSession{Creator: signerAddr, SessionKey: otherKey.PubKey()},
+				auth.MsgRevokeAllSessions{Creator: signerAddr}, callMsg())
+			rv.req.Offline, rv.req.Mode = true, protocol.ModeSignTx
+			rv.req.accountNumber, rv.req.sequence = 12, 5
+			rv.remote, rv.balance, rv.minFee, rv.sim = "", nil, nil, simulation{}
+			return rv
+		},
 		"control_characters": func() review {
 			m := callMsg()
 			m.PkgPath = "gno.land/r/" + ctrl

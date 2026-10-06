@@ -56,6 +56,13 @@ func txJSON(t *testing.T, tx std.Tx) json.RawMessage {
 	return b
 }
 
+// offline turns a request into a valid offline signtx for account 7,
+// sequence 3.
+func offline(r *protocol.Request) {
+	r.Mode, r.Offline = protocol.ModeSignTx, true
+	r.Account = &protocol.Account{Number: "7", Sequence: "3"}
+}
+
 // requestJSON builds a valid sendtx request for tx, then applies edit.
 func requestJSON(t *testing.T, tx std.Tx, edit func(*protocol.Request)) []byte {
 	t.Helper()
