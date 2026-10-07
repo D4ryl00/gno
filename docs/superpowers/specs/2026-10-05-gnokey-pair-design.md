@@ -2,8 +2,8 @@
 
 Design doc. Status: accepted. The desktop side is implemented in
 `contribs/gnokey-pair`, the gnokey-mobile side on its `feat/send-to-computer`
-branch. Signing offline and signing by hand (below) are implemented in
-gnokey-pair; their gnokey-mobile side is not.
+branch. Signing offline and signing by hand (below) are implemented on both
+sides.
 
 The GnoConnect sections cited below (launch links, `signtx`, sessions,
 "Obtaining the identity's signature") are in `docs/resources/gnoconnect.md` as
