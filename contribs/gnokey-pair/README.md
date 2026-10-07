@@ -73,6 +73,9 @@ docker build -t gnokey-pair-relay contribs/gnokey-pair/relay
 docker run -d -p 4000:4000 gnokey-pair-relay
 ```
 
+or `docker compose up -d` in `relay/`, which builds the same image and adds a
+restart policy, a health check, and a volume that keeps pairings in progress.
+
 Or in a Python venv:
 
 ```sh

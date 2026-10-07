@@ -1,0 +1,19 @@
+# gnokey-pair's relay, built from the Dockerfile here: docker compose up -d
+# It serves ws://<host>:4000/v1; put a TLS proxy in front for wss://.
+services:
+  relay:
+    build: .
+    image: gnokey-pair-relay
+    restart: unless-stopped
+    ports:
+      - "4000:4000"
+    volumes:
+      - relay-data:/data # optional: keeps pairings in progress when the container is replaced
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4000/v1')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  relay-data:
