@@ -1,9 +1,11 @@
 # gnokey-pair's relay: the reference magic-wormhole mailbox server, unmodified.
 #
 #   docker build -t gnokey-pair-relay contribs/gnokey-pair/relay
-#   docker run -d -p 4000:4000 -v gnokey-pair-relay:/data gnokey-pair-relay
+#   docker run -d -p 4000:4000 gnokey-pair-relay
 #
 # It serves ws://<host>:4000/v1; put a TLS proxy in front for wss://.
+# /data holds only pairings in progress; mount a volume there to keep them
+# when the container is replaced.
 
 FROM python:3.12-slim
 
@@ -15,7 +17,6 @@ RUN pip install --no-cache-dir --root-user-action=ignore --requirement /tmp/requ
 
 USER relay
 WORKDIR /data
-VOLUME /data
 EXPOSE 4000
 
 # No --usage-db: the relay keeps no usage records.

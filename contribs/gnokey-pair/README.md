@@ -70,7 +70,7 @@ dependencies, runs it as a non-root user, and keeps no usage records):
 
 ```sh
 docker build -t gnokey-pair-relay contribs/gnokey-pair/relay
-docker run -d -p 4000:4000 -v gnokey-pair-relay:/data gnokey-pair-relay
+docker run -d -p 4000:4000 gnokey-pair-relay
 ```
 
 Or in a Python venv:
