@@ -10,12 +10,11 @@ Design: `docs/superpowers/specs/2026-10-05-gnokey-pair-design.md`.
 
 ## Install
 
-gnokey-pair is not in a gno release yet: build it from the `feat/gnokey-pair`
-branch. It runs the `gnokey` that holds your keys, so install that too if you
-have not.
+gnokey-pair runs the `gnokey` that holds your keys, so install that too if you
+have not. Build both from a clone of the gno repository:
 
 ```sh
-git clone --depth 1 --branch feat/gnokey-pair https://github.com/D4ryl00/gno.git
+git clone --depth 1 https://github.com/gnolang/gno.git
 cd gno
 make install.gnokey                  # skip if gnokey is already installed
 make -C contribs/gnokey-pair install # gnokey-pair, into $(go env GOPATH)/bin
