@@ -64,14 +64,24 @@ node.
 
 Both ends meet on the default relay. To use another one, such as
 a private relay or one on your machine for development, run the reference
-magic-wormhole mailbox server, at the version the tests pin:
+magic-wormhole mailbox server, unmodified, at the version the tests pin. With
+Docker, from the repository root (`relay/Dockerfile` also locks its
+dependencies, runs it as a non-root user, and keeps no usage records):
 
 ```sh
-python3 -m venv relay && relay/bin/pip install magic-wormhole-mailbox-server==0.8.0
-relay/bin/twist wormhole-mailbox --port tcp:4000 --channel-db relay.sqlite
+docker build -t gnokey-pair-relay contribs/gnokey-pair/relay
+docker run -d -p 4000:4000 -v gnokey-pair-relay:/data gnokey-pair-relay
 ```
 
-It serves `ws://<host>:4000/v1`; put it behind a TLS proxy for `wss://`. Then
+Or in a Python venv:
+
+```sh
+python3 -m venv wormhole-relay
+wormhole-relay/bin/pip install magic-wormhole-mailbox-server==0.8.0
+wormhole-relay/bin/twist wormhole-mailbox --port tcp:4000 --channel-db relay.sqlite
+```
+
+Either serves `ws://<host>:4000/v1`; put it behind a TLS proxy for `wss://`. Then
 start `gnokey-pair -relay ws://<host>:4000/v1`, and in Gnokey Mobile set
 Settings → Send to my computer → Relay to the same URL. A scanned QR carries
 the relay, so only a typed code needs the setting.
