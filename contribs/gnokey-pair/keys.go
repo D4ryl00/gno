@@ -26,6 +26,11 @@ type keybase interface {
 	// Sign signs txPath in place, using the terminal for the password or the
 	// Ledger. A key that is not in the keybase returns errKeyNotFound.
 	Sign(ctx context.Context, txPath, chainID string, accountNumber, sequence uint64, signer string) error
+	// CanSignData says whether this gnokey has sign-data.
+	CanSignData(ctx context.Context) bool
+	// SignData has gnokey sign the text in dataPath, writing the proof to
+	// outPath. A key that is not in the keybase returns errKeyNotFound.
+	SignData(ctx context.Context, dataPath, chainID, signer, outPath string) error
 }
 
 var (
@@ -102,6 +107,26 @@ func (g *gnokeyBin) Sign(ctx context.Context, txPath, chainID string, accountNum
 			return fmt.Errorf("%w: %s", errKeyNotFound, signer)
 		}
 		return fmt.Errorf("gnokey sign: %w", err)
+	}
+	return nil
+}
+
+func (g *gnokeyBin) CanSignData(ctx context.Context) bool {
+	out, _ := g.command(ctx, "sign-data", "-h").CombinedOutput() // -h exits non-zero
+	return strings.Contains(string(out), "sign-data [flags]")
+}
+
+func (g *gnokeyBin) SignData(ctx context.Context, dataPath, chainID, signer, outPath string) error {
+	cmd := g.command(ctx, "sign-data", "-chainid", chainID, "-data-path", dataPath, "-output-document", outPath, signer)
+	// As Sign: the terminal for the password or the Ledger, stderr kept to
+	// tell a missing key apart.
+	var stderr bytes.Buffer
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = g.stdin, g.stdout, io.MultiWriter(g.stderr, &stderr)
+	if err := cmd.Run(); err != nil {
+		if strings.Contains(stderr.String(), "not found") {
+			return fmt.Errorf("%w: %s", errKeyNotFound, signer)
+		}
+		return fmt.Errorf("gnokey sign-data: %w", err)
 	}
 	return nil
 }

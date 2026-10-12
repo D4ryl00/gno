@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -73,7 +74,15 @@ func (p *pairing) run(ctx context.Context) error {
 
 	actx, cancel := context.WithTimeout(ctx, allocateTimeout)
 	defer cancel()
-	ch, err := wormhole.Allocate(actx, wormhole.Config{RelayURL: p.cfg.relay, Versions: protocol.AppVersions(versions)})
+	// data is announced only when this gnokey can sign a text
+	ours := versions
+	ours.Kinds = slices.Clone(versions.Kinds)
+	if p.keys.CanSignData(ctx) {
+		ours.Kinds = append(ours.Kinds, protocol.KindData)
+	} else {
+		p.printf("note: this gnokey has no sign-data, so the phone cannot ask it to sign a text\n")
+	}
+	ch, err := wormhole.Allocate(actx, wormhole.Config{RelayURL: p.cfg.relay, Versions: protocol.AppVersions(ours)})
 	if err != nil {
 		return fmt.Errorf("relay %s: %w", p.cfg.relay, err)
 	}
@@ -141,6 +150,9 @@ func (p *pairing) serve(ctx context.Context, raw []byte, words string) (protocol
 }
 
 func (p *pairing) process(ctx context.Context, raw []byte, words string) (*protocol.Result, error) {
+	if kindOf(raw) == protocol.KindData {
+		return p.processData(ctx, raw, words)
+	}
 	now := p.now()
 	req, err := parseRequest(raw, now)
 	if err != nil {

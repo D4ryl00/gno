@@ -103,6 +103,26 @@ func (k *fakeKeys) Sign(_ context.Context, path, chainID string, accNum, seq uin
 	return os.WriteFile(path, amino.MustMarshalJSON(tx), 0o600)
 }
 
+func (k *fakeKeys) CanSignData(context.Context) bool { return true }
+
+// SignData plays gnokey sign-data with key: a key that is not the signer's
+// signs as itself, as gnokey would with whatever key it holds.
+func (k *fakeKeys) SignData(_ context.Context, dataPath, chainID, _ string, outPath string) error {
+	k.signed++
+	if k.signErr != nil {
+		return k.signErr
+	}
+	data, err := os.ReadFile(dataPath)
+	if err != nil {
+		return err
+	}
+	out, err := signDataProof(k.key, chainID, k.key.PubKey().Address(), string(data))
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(outPath, out, 0o600)
+}
+
 type pipelineCase struct {
 	node    *fakeNode
 	keys    *fakeKeys

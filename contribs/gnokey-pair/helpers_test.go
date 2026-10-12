@@ -2,6 +2,8 @@ package main
 
 import (
 	"encoding/json"
+	"os"
+	"regexp"
 	"testing"
 	"time"
 
@@ -107,3 +109,20 @@ func signWith(tx std.Tx, key crypto.PrivKey, chainID string, accountNumber, sequ
 	tx.Signatures = append(tx.Signatures, std.Signature{PubKey: key.PubKey(), Signature: sig})
 	return tx, nil
 }
+
+// waitForOutputPath waits for the by-hand command and returns its -output-document.
+func waitForOutputPath(t *testing.T, out *lockedBuffer) string {
+	t.Helper()
+	re := regexp.MustCompile(`-output-document (\S+)`)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if m := re.FindStringSubmatch(out.String()); m != nil {
+			return m[1]
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("no -output-document in:\n%s", out.String())
+	return ""
+}
+
+func writeFile(path string, b []byte) error { return os.WriteFile(path, b, 0o600) }

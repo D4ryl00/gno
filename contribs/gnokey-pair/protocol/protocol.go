@@ -20,7 +20,8 @@ type Versions struct {
 func AppVersions(v Versions) map[string]Versions { return map[string]Versions{VersionsKey: v} }
 
 const (
-	KindTx = "tx" // an unsigned std.Tx, amino JSON
+	KindTx   = "tx"   // an unsigned std.Tx, amino JSON
+	KindData = "data" // a text for the identity to sign with gnokey sign-data
 
 	ModeSendTx = "sendtx" // sign, simulate, broadcast
 	ModeSignTx = "signtx" // sign, return the signed bytes
@@ -32,6 +33,9 @@ const (
 // MaxTxSize bounds Request.Tx.
 const MaxTxSize = 64 << 10
 
+// MaxDataSize bounds Request.Data, as GnoConnect bounds a challenge.
+const MaxDataSize = 4096
+
 type Request struct {
 	Kind      string          `json:"kind"`
 	Mode      string          `json:"mode"`
@@ -39,6 +43,7 @@ type Request struct {
 	RPC       string          `json:"rpc,omitempty"` // advisory
 	Signer    string          `json:"signer"`        // bech32 address of the identity
 	Tx        json.RawMessage `json:"tx"`
+	Data      string          `json:"data,omitempty"`      // KindData: the text to sign
 	Requester *Requester      `json:"requester,omitempty"` // display only, never verified
 
 	// Offline asks gnokey-pair to sign with no network operation, from
@@ -72,13 +77,14 @@ const (
 )
 
 type Result struct {
-	Status   string `json:"status"`
-	Code     string `json:"code,omitempty"`
-	Detail   string `json:"detail,omitempty"`   // for display only; never branch on it
-	Hash     string `json:"hash,omitempty"`     // sendtx: base64, as gnokey prints it
-	Height   int64  `json:"height,omitempty"`   // sendtx
-	SignedTx string `json:"signedtx,omitempty"` // signtx: base64 amino-binary, broadcast unmodified
-	Manual   bool   `json:"manual,omitempty"`   // sendtx: the user runs the gnokey command; watch the chain
+	Status   string          `json:"status"`
+	Code     string          `json:"code,omitempty"`
+	Detail   string          `json:"detail,omitempty"`   // for display only; never branch on it
+	Hash     string          `json:"hash,omitempty"`     // sendtx: base64, as gnokey prints it
+	Height   int64           `json:"height,omitempty"`   // sendtx
+	SignedTx string          `json:"signedtx,omitempty"` // signtx: base64 amino-binary, broadcast unmodified
+	Manual   bool            `json:"manual,omitempty"`   // sendtx: the user runs the gnokey command; watch the chain
+	Proof    json.RawMessage `json:"proof,omitempty"`    // data: gnokey sign-data's output, checked
 }
 
 // Received tells gnokey-pair that the phone has read the Result.
